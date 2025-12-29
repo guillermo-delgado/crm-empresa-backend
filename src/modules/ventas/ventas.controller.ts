@@ -32,7 +32,7 @@ export const crearVenta = async (req: Request, res: Response) => {
       formaPago,
       createdBy: req.user.id, // ✅ SEGURO CON JWT
     });
-
+//
     res.status(201).json(venta);
   } catch (error: any) {
     if (error.code === 11000) {
