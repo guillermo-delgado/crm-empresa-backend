@@ -30,7 +30,7 @@ export const crearVenta = async (req: Request, res: Response) => {
       tomador,
       primaNeta: Number(primaNeta),
       formaPago,
-      createdBy: req.user._id, // 👈 FIX REAL
+      createdBy: req.user.id, // ✅ SEGURO CON JWT
     });
 
     res.status(201).json(venta);
