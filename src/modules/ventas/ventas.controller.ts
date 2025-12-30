@@ -1,15 +1,15 @@
 import { Request, Response } from "express";
 import Venta from "../../models/Venta";
+import mongoose from "mongoose";
 
 /* =========================
    CREAR VENTA
 ========================= */
+
 export const crearVenta = async (req: Request, res: Response) => {
   try {
     if (!req.user) {
-      return res.status(401).json({
-        message: "No autenticado",
-      });
+      return res.status(401).json({ message: "No autenticado" });
     }
 
     const {
@@ -30,20 +30,13 @@ export const crearVenta = async (req: Request, res: Response) => {
       tomador,
       primaNeta: Number(primaNeta),
       formaPago,
-      createdBy: req.user.id, // ✅ SEGURO CON JWT
+      createdBy: new mongoose.Types.ObjectId(req.user.id),
     });
-//
-    res.status(201).json(venta);
-  } catch (error: any) {
-    if (error.code === 11000) {
-      return res.status(400).json({
-        message: "El número de póliza ya existe",
-      });
-    }
 
-    res.status(500).json({
-      message: "Error al guardar la venta",
-    });
+    res.status(201).json(venta);
+  } catch (error) {
+    console.error("CREAR VENTA ERROR:", error);
+    res.status(500).json({ message: "Error al guardar la venta" });
   }
 };
 
@@ -52,45 +45,66 @@ export const crearVenta = async (req: Request, res: Response) => {
 ========================= */
 export const libroVentas = async (req: Request, res: Response) => {
   try {
+    if (!req.user) {
+      return res.status(401).json({ message: "No autenticado" });
+    }
+
     const month = Number(req.query.month);
     const year = Number(req.query.year);
+
+    if (!month || !year) {
+      return res.status(400).json({ message: "Mes y año obligatorios" });
+    }
+
+    const requestedDate = new Date(year, month - 1, 1);
+    const now = new Date();
+
+    // Diferencia en meses
+    const diffMonths =
+      (requestedDate.getFullYear() - now.getFullYear()) * 12 +
+      (requestedDate.getMonth() - now.getMonth());
+
+    // ⛔ EMPLEADOS: solo mes actual + 2 siguientes
+    if (req.user.role !== "admin" && (diffMonths < 0 || diffMonths > 2)) {
+      return res.status(403).json({
+        message: "No puedes consultar ventas de ese periodo",
+      });
+    }
 
     const start = new Date(year, month - 1, 1);
     const end = new Date(year, month, 0, 23, 59, 59);
 
-    const ventas = await Venta.find({
+    const filtro: any = {
       fechaEfecto: { $gte: start, $lte: end },
-    }).populate("createdBy", "nombre email");
+    };
+
+    // 👇 EMPLEADOS: solo sus ventas
+    if (req.user.role !== "admin") {
+      filtro.createdBy = req.user.id;
+    }
+
+    const ventas = await Venta.find(filtro).populate(
+      "createdBy",
+      "nombre email"
+    );
 
     const primaTotal = ventas.reduce(
       (acc, v) => acc + v.primaNeta,
       0
     );
 
-    const porRamo: Record<string, number> = {};
-    const porAseguradora: Record<string, number> = {};
-
-    ventas.forEach((v) => {
-      porRamo[v.ramo] = (porRamo[v.ramo] || 0) + v.primaNeta;
-      porAseguradora[v.aseguradora] =
-        (porAseguradora[v.aseguradora] || 0) + v.primaNeta;
-    });
-
     res.json({
       periodo: `${month}/${year}`,
-      resumen: {
-        primaTotal,
-        porRamo,
-        porAseguradora,
-      },
+      resumen: { primaTotal },
       ventas,
     });
-  } catch {
-    res.status(500).json({
-      message: "Error obteniendo libro de ventas",
-    });
+  } catch (error) {
+    console.error("LIBRO VENTAS ERROR:", error);
+    res.status(500).json({ message: "Error obteniendo libro de ventas" });
   }
 };
+
+
 
 /* =========================
    EDITAR VENTA

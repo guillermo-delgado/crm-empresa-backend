@@ -35,20 +35,21 @@ const UserSchema = new Schema<IUser>(
       trim: true,
     },
 
-    numma: {
-      type: String,
-      required: true,
-      unique: true,
-      trim: true,
-    },
-
     email: {
-      type: String,
-      required: true,
-      unique: true,
-      lowercase: true,
-      trim: true,
-    },
+  type: String,
+  required: true,
+  unique: true,
+  lowercase: true,
+  trim: true,
+},
+
+numma: {
+  type: String,
+  required: true,
+  unique: true,
+  lowercase: true,
+  trim: true,
+},
 
     password: {
       type: String,

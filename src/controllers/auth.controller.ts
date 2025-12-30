@@ -4,13 +4,20 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 
 export const login = async (req: Request, res: Response) => {
-  const { email, password } = req.body;
+  const { login, password } = req.body;
 
-  if (!email || !password) {
-    return res.status(400).json({ message: "Email y password obligatorios" });
+  if (!login || !password) {
+    return res.status(400).json({
+      message: "Usuario y contraseña obligatorios",
+    });
   }
 
-  const user = await User.findOne({ email }).select("+password");
+  const user = await User.findOne({
+    $or: [
+      { email: new RegExp(`^${login}$`, "i") },
+      { numma: new RegExp(`^${login}$`, "i") },
+    ],
+  }).select("+password");
 
   if (!user) {
     return res.status(401).json({ message: "Credenciales incorrectas" });
@@ -20,9 +27,9 @@ export const login = async (req: Request, res: Response) => {
     return res.status(403).json({ message: "Usuario desactivado" });
   }
 
-  const valid = await bcrypt.compare(password, user.password);
+  const validPassword = await bcrypt.compare(password, user.password);
 
-  if (!valid) {
+  if (!validPassword) {
     return res.status(401).json({ message: "Credenciales incorrectas" });
   }
 
@@ -30,7 +37,6 @@ export const login = async (req: Request, res: Response) => {
     {
       id: user._id,
       role: user.role,
-      email: user.email,
     },
     process.env.JWT_SECRET!,
     { expiresIn: "8h" }
@@ -42,6 +48,9 @@ export const login = async (req: Request, res: Response) => {
       id: user._id,
       nombre: user.nombre,
       role: user.role,
+      email: user.email,
+      numma: user.numma,
     },
   });
 };
+
