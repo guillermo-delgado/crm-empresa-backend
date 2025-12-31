@@ -1,11 +1,11 @@
 import { Request, Response } from "express";
 import Venta from "../../models/Venta";
+import Solicitud from "../../models/Solicitud";
 import mongoose from "mongoose";
 
 /* =========================
    CREAR VENTA
 ========================= */
-
 export const crearVenta = async (req: Request, res: Response) => {
   try {
     if (!req.user) {
@@ -59,12 +59,10 @@ export const libroVentas = async (req: Request, res: Response) => {
     const requestedDate = new Date(year, month - 1, 1);
     const now = new Date();
 
-    // Diferencia en meses
     const diffMonths =
       (requestedDate.getFullYear() - now.getFullYear()) * 12 +
       (requestedDate.getMonth() - now.getMonth());
 
-    // ⛔ EMPLEADOS: solo mes actual + 2 siguientes
     if (req.user.role !== "admin" && (diffMonths < 0 || diffMonths > 2)) {
       return res.status(403).json({
         message: "No puedes consultar ventas de ese periodo",
@@ -78,7 +76,6 @@ export const libroVentas = async (req: Request, res: Response) => {
       fechaEfecto: { $gte: start, $lte: end },
     };
 
-    // 👇 EMPLEADOS: solo sus ventas
     if (req.user.role !== "admin") {
       filtro.createdBy = req.user.id;
     }
@@ -104,14 +101,30 @@ export const libroVentas = async (req: Request, res: Response) => {
   }
 };
 
-
-
 /* =========================
    EDITAR VENTA
 ========================= */
 export const editarVenta = async (req: Request, res: Response) => {
   try {
+    if (!req.user) {
+      return res.status(401).json({ message: "No autenticado" });
+    }
+
     const { id } = req.params;
+
+    // 👤 EMPLEADO → crear solicitud
+    if (req.user.role !== "admin") {
+      await Solicitud.create({
+        tipo: "EDITAR_VENTA",
+        venta: id,
+        solicitadoPor: req.user.id,
+        payload: req.body,
+      });
+
+      return res.status(403).json({
+        message: "Solicitud de edición enviada al administrador",
+      });
+    }
 
     const {
       fechaEfecto,
@@ -149,7 +162,6 @@ export const editarVenta = async (req: Request, res: Response) => {
     res.json(venta);
   } catch (error: any) {
     console.error("EDITAR VENTA ERROR:", error.message);
-
     res.status(400).json({
       message: error.message || "Datos inválidos",
     });
@@ -161,7 +173,24 @@ export const editarVenta = async (req: Request, res: Response) => {
 ========================= */
 export const eliminarVenta = async (req: Request, res: Response) => {
   try {
+    if (!req.user) {
+      return res.status(401).json({ message: "No autenticado" });
+    }
+
     const { id } = req.params;
+
+    // 👤 EMPLEADO → crear solicitud
+    if (req.user.role !== "admin") {
+      await Solicitud.create({
+        tipo: "ELIMINAR_VENTA",
+        venta: id,
+        solicitadoPor: req.user.id,
+      });
+
+      return res.status(403).json({
+        message: "Solicitud de eliminación enviada al administrador",
+      });
+    }
 
     const venta = await Venta.findByIdAndDelete(id);
 
