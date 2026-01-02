@@ -17,10 +17,11 @@ const PORT = process.env.PORT || 3001;
     // 🔹 Crear servidor HTTP
     const server = http.createServer(app);
 
-    // 🔹 Inicializar Socket.IO
+    // 🔹 Inicializar Socket.IO (MISMA instancia siempre)
     const io = new Server(server, {
       cors: {
-        origin: "*", // luego lo afinamos si quieres
+        origin: "*",          // ⛔ no rompe nada ahora
+        credentials: true,    // ✅ necesario en producción
       },
     });
 
@@ -36,12 +37,12 @@ const PORT = process.env.PORT || 3001;
       });
     });
 
-    // 🔔 EVENTO DE PRUEBA (TEMPORAL)
+    // 🔔 EVENTO DE PRUEBA (NO se elimina)
     setTimeout(() => {
       try {
         getIO().emit("test_event", "✅ Socket funcionando correctamente");
         console.log("🔔 Evento test_event emitido");
-      } catch (e) {
+      } catch {
         console.warn("⚠️ No se pudo emitir test_event");
       }
     }, 3000);

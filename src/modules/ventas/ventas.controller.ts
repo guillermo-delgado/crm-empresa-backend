@@ -5,7 +5,6 @@ import mongoose from "mongoose";
 import User from "../../models/User";
 import { getIO } from "../../socket";
 
-
 /* =========================
    CREAR VENTA
 ========================= */
@@ -63,9 +62,9 @@ export const crearVenta = async (req: Request, res: Response) => {
     });
 
     /* 🔔 EVENTO TIEMPO REAL */
-    getIO().emit("VENTA_CREADA", {
-      ventaId: venta._id,
-    });
+    try {
+      getIO().emit("VENTA_CREADA", { ventaId: venta._id });
+    } catch {}
 
     res.status(201).json(venta);
   } catch (error) {
@@ -75,7 +74,7 @@ export const crearVenta = async (req: Request, res: Response) => {
 };
 
 /* =========================
-   LIBRO DE VENTAS
+   LIBRO DE VENTAS  ✅ (NO SE TOCA)
 ========================= */
 export const libroVentas = async (req: Request, res: Response) => {
   try {
@@ -146,9 +145,6 @@ export const editarVenta = async (req: Request, res: Response) => {
 
     const { id } = req.params;
 
-    // 🔔 OBTENEMOS IO AQUÍ (UNA SOLA VEZ)
-    const io = getIO();
-
     // 👤 EMPLEADO → crear solicitud
     if (req.user.role !== "admin") {
       const solicitud = await Solicitud.create({
@@ -158,11 +154,12 @@ export const editarVenta = async (req: Request, res: Response) => {
         payload: req.body,
       });
 
-      /* 🔔 EVENTO SOLICITUD */
-      io.emit("SOLICITUD_CREADA", {
-        solicitudId: solicitud._id,
-        tipo: "EDITAR_VENTA",
-      });
+      try {
+        getIO().emit("SOLICITUD_CREADA", {
+          solicitudId: solicitud._id,
+          tipo: "EDITAR_VENTA",
+        });
+      } catch {}
 
       return res.status(403).json({
         message: "Solicitud de edición enviada al administrador",
@@ -200,15 +197,13 @@ export const editarVenta = async (req: Request, res: Response) => {
     ).populate("createdBy", "nombre email numma");
 
     if (!venta) {
-      return res.status(404).json({
-        message: "Venta no encontrada",
-      });
+      return res.status(404).json({ message: "Venta no encontrada" });
     }
 
     /* 🔔 EVENTO VENTA ACTUALIZADA */
-    io.emit("VENTA_ACTUALIZADA", {
-      ventaId: venta._id,
-    });
+    try {
+      getIO().emit("VENTA_ACTUALIZADA", { ventaId: venta._id });
+    } catch {}
 
     res.json(venta);
   } catch (error: any) {
@@ -218,7 +213,6 @@ export const editarVenta = async (req: Request, res: Response) => {
     });
   }
 };
-
 
 /* =========================
    ELIMINAR VENTA
@@ -231,9 +225,6 @@ export const eliminarVenta = async (req: Request, res: Response) => {
 
     const { id } = req.params;
 
-    // 🔔 OBTENEMOS IO UNA SOLA VEZ
-    const io = getIO();
-
     // 👤 EMPLEADO → crear solicitud
     if (req.user.role !== "admin") {
       const solicitud = await Solicitud.create({
@@ -242,11 +233,12 @@ export const eliminarVenta = async (req: Request, res: Response) => {
         solicitadoPor: req.user.id,
       });
 
-      /* 🔔 EVENTO SOLICITUD */
-      io.emit("SOLICITUD_CREADA", {
-        solicitudId: solicitud._id,
-        tipo: "ELIMINAR_VENTA",
-      });
+      try {
+        getIO().emit("SOLICITUD_CREADA", {
+          solicitudId: solicitud._id,
+          tipo: "ELIMINAR_VENTA",
+        });
+      } catch {}
 
       return res.status(403).json({
         message: "Solicitud de eliminación enviada al administrador",
@@ -256,23 +248,16 @@ export const eliminarVenta = async (req: Request, res: Response) => {
     const venta = await Venta.findByIdAndDelete(id);
 
     if (!venta) {
-      return res.status(404).json({
-        message: "Venta no encontrada",
-      });
+      return res.status(404).json({ message: "Venta no encontrada" });
     }
 
     /* 🔔 EVENTO VENTA ELIMINADA */
-    io.emit("VENTA_ELIMINADA", {
-      ventaId: id,
-    });
+    try {
+      getIO().emit("VENTA_ELIMINADA", { ventaId: id });
+    } catch {}
 
-    res.json({
-      message: "Venta eliminada correctamente",
-    });
+    res.json({ message: "Venta eliminada correctamente" });
   } catch {
-    res.status(500).json({
-      message: "Error al eliminar la venta",
-    });
+    res.status(500).json({ message: "Error al eliminar la venta" });
   }
 };
-

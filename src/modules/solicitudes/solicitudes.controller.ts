@@ -50,9 +50,11 @@ export const aprobarSolicitud = async (req: any, res: any) => {
     if (solicitud.tipo === "ELIMINAR_VENTA") {
       await Venta.findByIdAndDelete(solicitud.venta);
 
-      getIO().emit("VENTA_ELIMINADA", {
-        ventaId: solicitud.venta,
-      });
+      try {
+        getIO().emit("VENTA_ELIMINADA", {
+          ventaId: solicitud.venta,
+        });
+      } catch {}
     }
 
     if (solicitud.tipo === "EDITAR_VENTA") {
@@ -62,19 +64,23 @@ export const aprobarSolicitud = async (req: any, res: any) => {
         { runValidators: true }
       );
 
-      getIO().emit("VENTA_ACTUALIZADA", {
-        ventaId: solicitud.venta,
-      });
+      try {
+        getIO().emit("VENTA_ACTUALIZADA", {
+          ventaId: solicitud.venta,
+        });
+      } catch {}
     }
 
     solicitud.estado = "APROBADA";
     await solicitud.save();
 
     /* === NOTIFICACIÓN GLOBAL === */
-    getIO().emit("SOLICITUD_RESUELTA", {
-      solicitudId: solicitud._id,
-      estado: "APROBADA",
-    });
+    try {
+      getIO().emit("SOLICITUD_RESUELTA", {
+        solicitudId: solicitud._id,
+        estado: "APROBADA",
+      });
+    } catch {}
 
     res.json({ message: "Solicitud aprobada" });
   } catch (e) {
@@ -102,10 +108,12 @@ export const rechazarSolicitud = async (req: any, res: any) => {
     await solicitud.save();
 
     /* === NOTIFICACIÓN GLOBAL === */
-    getIO().emit("SOLICITUD_RESUELTA", {
-      solicitudId: solicitud._id,
-      estado: "RECHAZADA",
-    });
+    try {
+      getIO().emit("SOLICITUD_RESUELTA", {
+        solicitudId: solicitud._id,
+        estado: "RECHAZADA",
+      });
+    } catch {}
 
     res.json({ message: "Solicitud rechazada" });
   } catch (e) {
