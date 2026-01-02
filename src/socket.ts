@@ -3,8 +3,7 @@ import { Server } from "socket.io";
 let io: Server | null = null;
 
 /**
- * 🔹 NUEVO
- * Permite registrar la instancia creada en server.ts
+ * 🔹 Registrar la instancia creada en server.ts
  * (uso principal en producción)
  */
 export const setIO = (ioInstance: Server) => {
@@ -12,17 +11,31 @@ export const setIO = (ioInstance: Server) => {
 };
 
 /**
- * 🔹 EXISTENTE
- * Inicialización alternativa (si algún día la usas)
+ * 🔹 Inicialización alternativa (legacy / local)
  * NO se elimina para no romper nada
  */
 export const initSocket = (server: any) => {
   // ⚠️ Evitar doble inicialización
   if (io) return io;
 
+  const allowedOrigins = [
+    process.env.FRONTEND_URL,
+    process.env.FRONTEND_URL_PROD,
+  ].filter(Boolean);
+
   io = new Server(server, {
     cors: {
-      origin: "*",
+      origin: (origin, callback) => {
+        // permitir llamadas internas (Postman, cron, etc.)
+        if (!origin) return callback(null, true);
+
+        if (allowedOrigins.includes(origin)) {
+          return callback(null, true);
+        }
+
+        return callback(new Error("Not allowed by CORS"));
+      },
+      credentials: true,
       methods: ["GET", "POST"],
     },
   });
@@ -35,8 +48,7 @@ export const initSocket = (server: any) => {
 };
 
 /**
- * 🔹 EXISTENTE
- * Obtener la instancia activa (controllers)
+ * 🔹 Obtener la instancia activa (controllers)
  */
 export const getIO = (): Server => {
   if (!io) {

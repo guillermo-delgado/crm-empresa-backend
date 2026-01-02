@@ -30,12 +30,12 @@ const PORT = process.env.PORT || 3001;
 
     // 🔹 Eventos de conexión
     io.on("connection", (socket) => {
-      console.log("🟢 Cliente conectado:", socket.id);
+  console.log("🟢 Cliente conectado:", socket.id);
 
-      socket.on("disconnect", () => {
-        console.log("🔴 Cliente desconectado:", socket.id);
-      });
-    });
+  // 🔔 PROVISIONAL: confirmar conexión
+  socket.emit("test_event", "✅ Socket funcionando correctamente");
+});
+
 
     // 🔔 EVENTO DE PRUEBA (NO se elimina)
     setTimeout(() => {
