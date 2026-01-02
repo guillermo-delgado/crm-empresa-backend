@@ -2,6 +2,9 @@ import { Request, Response } from "express";
 import Venta from "../../models/Venta";
 import Solicitud from "../../models/Solicitud";
 import mongoose from "mongoose";
+import User from "../../models/User";
+import { getIO } from "../../socket";
+
 
 /* =========================
    CREAR VENTA
@@ -20,7 +23,31 @@ export const crearVenta = async (req: Request, res: Response) => {
       tomador,
       primaNeta,
       formaPago,
+      actividad,
+      observaciones,
+      createdBy,
     } = req.body;
+
+    let usuarioAsignadoId = req.user.id;
+
+    // 🔐 SOLO ADMIN puede asignar ventas a otros
+    if (createdBy && req.user.role === "admin") {
+      const usuario = await User.findOne({
+        $or: [
+          { numma: createdBy },
+          { email: createdBy },
+          { nombre: createdBy },
+        ],
+      });
+
+      if (!usuario) {
+        return res.status(400).json({
+          message: "Usuario no válido para asignar la venta",
+        });
+      }
+
+      usuarioAsignadoId = usuario._id.toString();
+    }
 
     const venta = await Venta.create({
       fechaEfecto,
@@ -30,7 +57,14 @@ export const crearVenta = async (req: Request, res: Response) => {
       tomador,
       primaNeta: Number(primaNeta),
       formaPago,
-      createdBy: new mongoose.Types.ObjectId(req.user.id),
+      actividad,
+      observaciones,
+      createdBy: new mongoose.Types.ObjectId(usuarioAsignadoId),
+    });
+
+    /* 🔔 EVENTO TIEMPO REAL */
+    getIO().emit("VENTA_CREADA", {
+      ventaId: venta._id,
     });
 
     res.status(201).json(venta);
@@ -82,7 +116,7 @@ export const libroVentas = async (req: Request, res: Response) => {
 
     const ventas = await Venta.find(filtro).populate(
       "createdBy",
-      "nombre email"
+      "nombre email numma"
     );
 
     const primaTotal = ventas.reduce(
@@ -112,13 +146,22 @@ export const editarVenta = async (req: Request, res: Response) => {
 
     const { id } = req.params;
 
+    // 🔔 OBTENEMOS IO AQUÍ (UNA SOLA VEZ)
+    const io = getIO();
+
     // 👤 EMPLEADO → crear solicitud
     if (req.user.role !== "admin") {
-      await Solicitud.create({
+      const solicitud = await Solicitud.create({
         tipo: "EDITAR_VENTA",
         venta: id,
         solicitadoPor: req.user.id,
         payload: req.body,
+      });
+
+      /* 🔔 EVENTO SOLICITUD */
+      io.emit("SOLICITUD_CREADA", {
+        solicitudId: solicitud._id,
+        tipo: "EDITAR_VENTA",
       });
 
       return res.status(403).json({
@@ -134,6 +177,8 @@ export const editarVenta = async (req: Request, res: Response) => {
       tomador,
       primaNeta,
       formaPago,
+      actividad,
+      observaciones,
     } = req.body;
 
     const update: any = {};
@@ -143,21 +188,27 @@ export const editarVenta = async (req: Request, res: Response) => {
     if (ramo) update.ramo = ramo;
     if (numeroPoliza) update.numeroPoliza = numeroPoliza;
     if (tomador) update.tomador = tomador;
-    if (primaNeta !== undefined)
-      update.primaNeta = Number(primaNeta);
+    if (primaNeta !== undefined) update.primaNeta = Number(primaNeta);
     if (formaPago) update.formaPago = formaPago;
+    if (actividad) update.actividad = actividad;
+    if (observaciones !== undefined) update.observaciones = observaciones;
 
     const venta = await Venta.findByIdAndUpdate(
       id,
       update,
       { new: true, runValidators: true }
-    ).populate("createdBy", "nombre email");
+    ).populate("createdBy", "nombre email numma");
 
     if (!venta) {
       return res.status(404).json({
         message: "Venta no encontrada",
       });
     }
+
+    /* 🔔 EVENTO VENTA ACTUALIZADA */
+    io.emit("VENTA_ACTUALIZADA", {
+      ventaId: venta._id,
+    });
 
     res.json(venta);
   } catch (error: any) {
@@ -167,6 +218,7 @@ export const editarVenta = async (req: Request, res: Response) => {
     });
   }
 };
+
 
 /* =========================
    ELIMINAR VENTA
@@ -179,12 +231,21 @@ export const eliminarVenta = async (req: Request, res: Response) => {
 
     const { id } = req.params;
 
+    // 🔔 OBTENEMOS IO UNA SOLA VEZ
+    const io = getIO();
+
     // 👤 EMPLEADO → crear solicitud
     if (req.user.role !== "admin") {
-      await Solicitud.create({
+      const solicitud = await Solicitud.create({
         tipo: "ELIMINAR_VENTA",
         venta: id,
         solicitadoPor: req.user.id,
+      });
+
+      /* 🔔 EVENTO SOLICITUD */
+      io.emit("SOLICITUD_CREADA", {
+        solicitudId: solicitud._id,
+        tipo: "ELIMINAR_VENTA",
       });
 
       return res.status(403).json({
@@ -200,6 +261,11 @@ export const eliminarVenta = async (req: Request, res: Response) => {
       });
     }
 
+    /* 🔔 EVENTO VENTA ELIMINADA */
+    io.emit("VENTA_ELIMINADA", {
+      ventaId: id,
+    });
+
     res.json({
       message: "Venta eliminada correctamente",
     });
@@ -209,3 +275,4 @@ export const eliminarVenta = async (req: Request, res: Response) => {
     });
   }
 };
+

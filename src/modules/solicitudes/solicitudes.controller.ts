@@ -1,9 +1,15 @@
 import { Request, Response } from "express";
 import Solicitud from "../../models/Solicitud";
 import Venta from "../../models/Venta";
+import { getIO } from "../../socket";
 
-
-export const listarSolicitudesPendientes = async (req: Request, res: Response) => {
+/* =========================
+   LISTAR SOLICITUDES PENDIENTES
+========================= */
+export const listarSolicitudesPendientes = async (
+  req: Request,
+  res: Response
+) => {
   try {
     if (!req.user || req.user.role !== "admin") {
       return res.status(403).json({
@@ -13,7 +19,7 @@ export const listarSolicitudesPendientes = async (req: Request, res: Response) =
 
     const solicitudes = await Solicitud.find({ estado: "PENDIENTE" })
       .populate("venta", "numeroPoliza tomador")
-      .populate("solicitadoPor", "nombre email")
+      .populate("solicitadoPor", "nombre email numma")
       .sort({ createdAt: -1 });
 
     res.json(solicitudes);
@@ -40,9 +46,13 @@ export const aprobarSolicitud = async (req: any, res: any) => {
       return res.status(404).json({ message: "Solicitud no válida" });
     }
 
-    // Ejecutar acción real
+    /* === EJECUTAR ACCIÓN REAL === */
     if (solicitud.tipo === "ELIMINAR_VENTA") {
       await Venta.findByIdAndDelete(solicitud.venta);
+
+      getIO().emit("VENTA_ELIMINADA", {
+        ventaId: solicitud.venta,
+      });
     }
 
     if (solicitud.tipo === "EDITAR_VENTA") {
@@ -51,10 +61,20 @@ export const aprobarSolicitud = async (req: any, res: any) => {
         solicitud.payload,
         { runValidators: true }
       );
+
+      getIO().emit("VENTA_ACTUALIZADA", {
+        ventaId: solicitud.venta,
+      });
     }
 
     solicitud.estado = "APROBADA";
     await solicitud.save();
+
+    /* === NOTIFICACIÓN GLOBAL === */
+    getIO().emit("SOLICITUD_RESUELTA", {
+      solicitudId: solicitud._id,
+      estado: "APROBADA",
+    });
 
     res.json({ message: "Solicitud aprobada" });
   } catch (e) {
@@ -80,6 +100,12 @@ export const rechazarSolicitud = async (req: any, res: any) => {
 
     solicitud.estado = "RECHAZADA";
     await solicitud.save();
+
+    /* === NOTIFICACIÓN GLOBAL === */
+    getIO().emit("SOLICITUD_RESUELTA", {
+      solicitudId: solicitud._id,
+      estado: "RECHAZADA",
+    });
 
     res.json({ message: "Solicitud rechazada" });
   } catch (e) {

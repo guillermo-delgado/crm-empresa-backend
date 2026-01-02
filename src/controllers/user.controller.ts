@@ -2,6 +2,9 @@ import User from "../models/User";
 import bcrypt from "bcryptjs";
 import { Request, Response } from "express";
 
+/* =========================
+   CREAR USUARIO
+========================= */
 export const crearUsuario = async (req: Request, res: Response) => {
   try {
     const {
@@ -68,5 +71,35 @@ export const crearUsuario = async (req: Request, res: Response) => {
   } catch (error) {
     console.error("CREAR USUARIO ERROR:", error);
     res.status(500).json({ message: "Error creando usuario" });
+  }
+};
+
+/* =========================
+   LISTAR USUARIOS ASIGNABLES (ADMIN)
+========================= */
+export const listarUsuariosAsignables = async (
+  req: Request,
+  res: Response
+) => {
+  try {
+    if (!req.user || req.user.role !== "admin") {
+      return res.status(403).json({
+        message: "Solo administradores",
+      });
+    }
+
+    const usuarios = await User.find(
+      {
+        role: { $in: ["empleado", "colaborador"] },
+      },
+      "nombre email role"
+    ).sort({ nombre: 1 });
+
+    res.json(usuarios);
+  } catch (error) {
+    console.error("LISTAR USUARIOS ASIGNABLES ERROR:", error);
+    res.status(500).json({
+      message: "Error cargando usuarios",
+    });
   }
 };

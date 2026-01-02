@@ -8,19 +8,56 @@ import {
 
 import { authMiddleware } from "../../middlewares/auth";
 import { adminOnly } from "../../middlewares/role.middleware";
+import {
+  validateCreateVenta,
+  validateEditVenta,
+} from "./ventas.validator";
 
 const router = Router();
 
-// Crear venta → empleado + admin
-router.post("/", authMiddleware, crearVenta);
+/* =========================
+   CREAR VENTA
+   - Empleado y Admin
+========================= */
+router.post(
+  "/",
+  authMiddleware,
+  validateCreateVenta,
+  crearVenta
+);
 
-// Libro de ventas → autenticado (filtras por rol dentro)
-router.get("/libro", authMiddleware, libroVentas);
+/* =========================
+   LIBRO DE VENTAS
+   - Autenticado
+   - Filtrado por rol en controller
+========================= */
+router.get(
+  "/libro",
+  authMiddleware,
+  libroVentas
+);
 
-// Editar venta → solo admin
-router.put("/:id", authMiddleware, editarVenta);
+/* =========================
+   EDITAR VENTA
+   - Admin: edita directo
+   - Empleado: crea solicitud (lógica en controller)
+========================= */
+router.put(
+  "/:id",
+  authMiddleware,
+  validateEditVenta,
+  editarVenta
+);
 
-// Eliminar venta → solo admin
-router.delete("/:id", authMiddleware, eliminarVenta);
+/* =========================
+   ELIMINAR VENTA
+   - Admin: elimina directo
+   - Empleado: crea solicitud (lógica en controller)
+========================= */
+router.delete(
+  "/:id",
+  authMiddleware,
+  eliminarVenta
+);
 
 export default router;
