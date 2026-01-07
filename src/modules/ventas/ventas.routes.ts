@@ -4,6 +4,7 @@ import {
   libroVentas,
   eliminarVenta,
   editarVenta,
+  obtenerVentaPorId,
 } from "./ventas.controller";
 
 import { authMiddleware } from "../../middlewares/auth";
@@ -59,5 +60,16 @@ router.delete(
   authMiddleware,
   eliminarVenta
 );
+
+/* =========================
+   OBTENER VENTA POR ID
+   - Autenticado
+========================= */
+router.get(
+  "/:id",
+  authMiddleware,
+  obtenerVentaPorId
+);
+
 
 export default router;

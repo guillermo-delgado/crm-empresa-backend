@@ -8,19 +8,22 @@ import { authMiddleware } from "../../middlewares/auth";
 
 const router = Router();
 
+/* 🔐 AUTH GLOBAL PARA TODAS LAS RUTAS */
+router.use(authMiddleware);
+
 /* =========================
    LISTAR SOLICITUDES (ADMIN)
 ========================= */
-router.get("/", authMiddleware, listarSolicitudesPendientes);
+router.get("/", listarSolicitudesPendientes);
 
 /* =========================
    APROBAR SOLICITUD
 ========================= */
-router.post("/:id/aprobar", authMiddleware, aprobarSolicitud);
+router.post("/:id/aprobar", aprobarSolicitud);
 
 /* =========================
    RECHAZAR SOLICITUD
 ========================= */
-router.post("/:id/rechazar", authMiddleware, rechazarSolicitud);
+router.post("/:id/rechazar", rechazarSolicitud);
 
 export default router;

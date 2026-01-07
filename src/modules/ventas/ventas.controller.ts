@@ -261,3 +261,26 @@ export const eliminarVenta = async (req: Request, res: Response) => {
     res.status(500).json({ message: "Error al eliminar la venta" });
   }
 };
+
+/* =========================
+   OBTENER VENTA POR ID
+========================= */
+export const obtenerVentaPorId = async (req: any, res: any) => {
+  try {
+    const { id } = req.params;
+
+    const venta = await Venta.findById(id)
+  .populate("createdBy", "numma nombre email");
+
+
+    if (!venta) {
+      return res.status(404).json({ message: "Venta no encontrada" });
+    }
+
+    res.json(venta);
+  } catch (error) {
+    console.error("❌ Error obteniendo venta por id:", error);
+    res.status(500).json({ message: "Error obteniendo la venta" });
+  }
+};
+
