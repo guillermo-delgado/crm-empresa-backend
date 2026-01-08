@@ -90,9 +90,9 @@ export const listarUsuariosAsignables = async (
 
     const usuarios = await User.find(
       {
-        role: { $in: ["empleado", "colaborador"] },
+        role: { $in: ["admin", "empleado", "colaborador"] },
       },
-      "nombre email role"
+      "nombre email numma role"
     ).sort({ nombre: 1 });
 
     res.json(usuarios);
@@ -103,3 +103,4 @@ export const listarUsuariosAsignables = async (
     });
   }
 };
+
