@@ -166,19 +166,26 @@ export const editarVenta = async (req: Request, res: Response) => {
       });
     }
 
-    const {
-      fechaEfecto,
-      aseguradora,
-      ramo,
-      numeroPoliza,
-      tomador,
-      primaNeta,
-      formaPago,
-      actividad,
-      observaciones,
-    } = req.body;
+   const {
+  fechaEfecto,
+  aseguradora,
+  ramo,
+  numeroPoliza,
+  tomador,
+  primaNeta,
+  formaPago,
+  actividad,
+  observaciones,
+  createdBy, // ← AÑADE ESTA LÍNEA
+} = req.body;
+
 
     const update: any = {};
+
+    if (createdBy && req.user.role === "admin") {
+  update.createdBy = new mongoose.Types.ObjectId(createdBy);
+}
+
 
     if (fechaEfecto) update.fechaEfecto = fechaEfecto;
     if (aseguradora) update.aseguradora = aseguradora;
