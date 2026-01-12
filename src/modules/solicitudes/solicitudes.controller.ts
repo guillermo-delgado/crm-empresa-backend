@@ -121,16 +121,23 @@ export const aprobarSolicitud = async (req: any, res: any) => {
         });
     }
 
-    /* =========================
-       ✅ MARCAR APROBADA
-    ========================= */
-    solicitud.estado = "APROBADA";
-    await solicitud.save();
-    getIO().emit("SOLICITUD_RESUELTA", {
+/* =========================
+   ✅ MARCAR APROBADA
+========================= */
+solicitud.estado = "APROBADA";
+await solicitud.save();
+
+// 🔔 ACTUALIZAR ESTADO VISUAL DE LA VENTA
+await Venta.findByIdAndUpdate(ventaId, {
+  estadoRevision: "aceptada",
+});
+
+getIO().emit("SOLICITUD_RESUELTA", {
   solicitudId: solicitud._id,
   ventaId: solicitud.venta,
   estado: solicitud.estado,
 });
+
 
 
     /* =========================
@@ -179,20 +186,20 @@ export const rechazarSolicitud = async (req: any, res: any) => {
     }
 
     /* =========================
-       ❌ MARCAR RECHAZADA
+       ❌ MARCAR SOLICITUD RECHAZADA
     ========================= */
     solicitud.estado = "RECHAZADA";
     await solicitud.save();
-    getIO().emit("SOLICITUD_RESUELTA", {
-  solicitudId: solicitud._id,
-  ventaId: solicitud.venta,
-  estado: solicitud.estado,
-});
 
+    /* =========================
+       🔴 ACTUALIZAR VENTA (CLAVE)
+    ========================= */
+    await Venta.findByIdAndUpdate(solicitud.venta, {
+      estadoRevision: "rechazada",
+    });
 
     /* =========================
        🧹 ELIMINAR RESTO DE PENDIENTES
-       (MISMA VENTA)
     ========================= */
     await Solicitud.deleteMany({
       venta: solicitud.venta,
@@ -201,14 +208,17 @@ export const rechazarSolicitud = async (req: any, res: any) => {
     });
 
     /* =========================
-       🔔 SOCKET GLOBAL
+       🔔 SOCKETS
     ========================= */
-    try {
-      getIO().emit("SOLICITUD_RESUELTA", {
-        solicitudId: solicitud._id,
-        estado: "RECHAZADA",
-      });
-    } catch {}
+    getIO().emit("VENTA_ACTUALIZADA", {
+      ventaId: solicitud.venta,
+    });
+
+    getIO().emit("SOLICITUD_RESUELTA", {
+      solicitudId: solicitud._id,
+      ventaId: solicitud.venta,
+      estado: "RECHAZADA",
+    });
 
     return res.json({ message: "Solicitud rechazada" });
   } catch (error) {
@@ -216,4 +226,5 @@ export const rechazarSolicitud = async (req: any, res: any) => {
     return res.status(500).json({ message: "Error rechazando solicitud" });
   }
 };
+
 

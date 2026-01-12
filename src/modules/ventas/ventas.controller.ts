@@ -160,6 +160,10 @@ export const editarVenta = async (req: Request, res: Response) => {
           tipo: "EDITAR_VENTA",
         });
       } catch {}
+// 🟡 MARCAR VENTA COMO PENDIENTE DE REVISIÓN
+await Venta.findByIdAndUpdate(id, {
+  estadoRevision: "pendiente",
+});
 
       return res.status(403).json({
         message: "Solicitud de edición enviada al administrador",
@@ -247,6 +251,11 @@ export const eliminarVenta = async (req: Request, res: Response) => {
         });
       } catch {}
 
+      await Venta.findByIdAndUpdate(id, {
+  estadoRevision: "pendiente",
+});
+
+
       return res.status(403).json({
         message: "Solicitud de eliminación enviada al administrador",
       });
@@ -291,3 +300,47 @@ export const obtenerVentaPorId = async (req: any, res: any) => {
   }
 };
 
+/* =========================
+   MARCAR REVISIÓN COMO LEÍDA (EMPLEADO)
+========================= */
+export const marcarRevisionLeida = async (req: Request, res: Response) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ message: "No autenticado" });
+    }
+
+    const { id } = req.params;
+
+    // 🔒 Solo empleados (admin no tiene sentido aquí)
+    if (req.user.role === "admin") {
+      return res.status(403).json({
+        message: "El administrador no puede marcar revisiones",
+      });
+    }
+
+    const venta = await Venta.findOne({
+      _id: id,
+      createdBy: req.user.id,
+    });
+
+    if (!venta) {
+      return res.status(404).json({
+        message: "Venta no encontrada o no autorizada",
+      });
+    }
+
+    // 🔔 Limpiar estado visual
+    venta.estadoRevision = null;
+    await venta.save();
+
+    res.json({
+      message: "Estado de revisión limpiado",
+      venta,
+    });
+  } catch (error) {
+    console.error("ERROR marcarRevisionLeida:", error);
+    res.status(500).json({
+      message: "Error limpiando estado de revisión",
+    });
+  }
+};

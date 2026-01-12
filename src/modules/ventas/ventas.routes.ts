@@ -7,6 +7,7 @@ import {
   obtenerVentaPorId,
 } from "./ventas.controller";
 
+
 import { authMiddleware } from "../../middlewares/auth";
 import { adminOnly } from "../../middlewares/role.middleware";
 import {
@@ -69,6 +70,19 @@ router.get(
   "/:id",
   authMiddleware,
   obtenerVentaPorId
+);
+
+/* =========================
+   MARCAR REVISIÓN COMO LEÍDA
+   - Empleado propietario
+========================= */
+router.patch(
+  "/:id/marcar-revision-leida",
+  authMiddleware,
+  async (req, res) => {
+    const { marcarRevisionLeida } = await import("./ventas.controller");
+    return marcarRevisionLeida(req, res);
+  }
 );
 
 

@@ -51,6 +51,13 @@ const VentaSchema = new mongoose.Schema(
       default: "",
     },
 
+    /* === 🔔 NUEVO: ESTADO DE REVISIÓN (empleado/admin) === */
+    estadoRevision: {
+      type: String,
+      enum: ["pendiente", "aceptada", "rechazada"],
+      default: null,
+    },
+
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
