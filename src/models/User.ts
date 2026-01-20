@@ -9,6 +9,16 @@ export interface IUser extends Document {
   password: string;
   role: "admin" | "empleado" | "colaborador";
   activo: boolean;
+
+  // ⏱️ CONFIGURACIÓN LABORAL
+  horasContratadasSemana: number;
+  maxDiasVacaciones: number;
+    balanceMinutos?: number;
+
+
+  // 🔐 Sesión CRM activa
+  crmSessionId?: string | null;
+
   createdAt: Date;
   updatedAt: Date;
 }
@@ -36,25 +46,25 @@ const UserSchema = new Schema<IUser>(
     },
 
     email: {
-  type: String,
-  required: true,
-  unique: true,
-  lowercase: true,
-  trim: true,
-},
+      type: String,
+      required: true,
+      unique: true,
+      lowercase: true,
+      trim: true,
+    },
 
-numma: {
-  type: String,
-  required: true,
-  unique: true,
-  lowercase: true,
-  trim: true,
-},
+    numma: {
+      type: String,
+      required: true,
+      unique: true,
+      lowercase: true,
+      trim: true,
+    },
 
     password: {
       type: String,
       required: true,
-      select: false, // MUY IMPORTANTE
+      select: false,
     },
 
     role: {
@@ -66,6 +76,34 @@ numma: {
     activo: {
       type: Boolean,
       default: true,
+    },
+
+    /* =========================
+       CONFIGURACIÓN LABORAL
+    ========================= */
+    horasContratadasSemana: {
+      type: Number,
+      default: 40,
+      min: 0,
+    },
+
+    maxDiasVacaciones: {
+      type: Number,
+      default: 30,
+      min: 0,
+    },
+        balanceMinutos: {
+      type: Number,
+      default: 0,
+    },
+
+
+    /* =========================
+       SESIÓN CRM
+    ========================= */
+    crmSessionId: {
+      type: String,
+      default: null,
     },
   },
   {

@@ -1,10 +1,10 @@
-import { Server } from "socket.io";
+import { Server, Socket } from "socket.io";
+import jwt from "jsonwebtoken";
 
 let io: Server | null = null;
 
 /**
  * 🔹 Registrar la instancia creada en server.ts
- * (uso principal en producción)
  */
 export const setIO = (ioInstance: Server) => {
   io = ioInstance;
@@ -12,10 +12,8 @@ export const setIO = (ioInstance: Server) => {
 
 /**
  * 🔹 Inicialización alternativa (legacy / local)
- * NO se elimina para no romper nada
  */
 export const initSocket = (server: any) => {
-  // ⚠️ Evitar doble inicialización
   if (io) return io;
 
   const allowedOrigins = [
@@ -26,13 +24,10 @@ export const initSocket = (server: any) => {
   io = new Server(server, {
     cors: {
       origin: (origin, callback) => {
-        // permitir llamadas internas (Postman, cron, etc.)
         if (!origin) return callback(null, true);
-
         if (allowedOrigins.includes(origin)) {
           return callback(null, true);
         }
-
         return callback(new Error("Not allowed by CORS"));
       },
       credentials: true,
@@ -40,15 +35,70 @@ export const initSocket = (server: any) => {
     },
   });
 
-  io.on("connection", (socket) => {
+  io.on("connection", (socket: Socket) => {
     console.log("🟢 Socket conectado:", socket.id);
+
+    let userId: string | null = null;
+
+    /* ======================================================
+       1️⃣ auth.userId (legacy)
+    ====================================================== */
+    if (typeof socket.handshake.auth?.userId === "string") {
+      userId = socket.handshake.auth.userId;
+    }
+
+    /* ======================================================
+       2️⃣ query.userId (legacy)
+    ====================================================== */
+    if (!userId && typeof socket.handshake.query?.userId === "string") {
+      userId = socket.handshake.query.userId;
+    }
+
+    /* ======================================================
+       3️⃣ JWT (FUENTE CANÓNICA)
+    ====================================================== */
+    if (!userId) {
+      const token =
+        socket.handshake.auth?.token ||
+        socket.handshake.query?.token;
+
+      if (typeof token === "string") {
+        try {
+          const payload: any = jwt.verify(
+            token,
+            process.env.JWT_SECRET as string
+          );
+          userId = payload.id;
+        } catch {
+          userId = null;
+        }
+      }
+    }
+
+    /* ======================================================
+       🏠 ROOM DE USUARIO (UNIFICADA)
+    ====================================================== */
+    if (userId) {
+      socket.data.userId = userId;
+
+      const room = `user:${userId}`;
+      socket.join(room);
+
+      console.log(`👤 Socket unido a room ${room}`);
+    } else {
+      console.log("⚠️ Socket SIN usuario válido");
+    }
+
+    socket.on("disconnect", () => {
+      console.log("🔴 Socket desconectado:", socket.id);
+    });
   });
 
   return io;
 };
 
 /**
- * 🔹 Obtener la instancia activa (controllers)
+ * 🔹 Obtener la instancia activa
  */
 export const getIO = (): Server => {
   if (!io) {

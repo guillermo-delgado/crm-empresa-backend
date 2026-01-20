@@ -40,6 +40,23 @@ export const authMiddleware = async (
       });
     }
 
+    /* =========================
+       🔐 BLOQUEO DE SESIÓN CRM
+       - Solo para rutas /crm/*
+       - La primera sesión manda
+    ========================= */
+    if (
+      req.originalUrl.startsWith("/crm") &&
+      user.crmSessionId && // hay sesión CRM registrada
+      decoded.crmSessionId !== user.crmSessionId
+    ) {
+      return res.status(403).json({
+        message: "Sesión CRM no válida",
+        code: "CRM_SESSION_CONFLICT",
+      });
+    }
+
+    // 👤 Usuario autenticado
     req.user = {
       id: user._id.toString(),
       role: user.role,
@@ -47,7 +64,7 @@ export const authMiddleware = async (
 
     next();
   } catch (error) {
-    // 🔴 TOKEN CADUCADO → CLAVE
+    // 🔴 TOKEN CADUCADO
     if (error instanceof TokenExpiredError) {
       return res.status(401).json({
         message: "Token caducado",
@@ -55,7 +72,7 @@ export const authMiddleware = async (
       });
     }
 
-    // 🔴 CUALQUIER OTRO ERROR DE TOKEN
+    // 🔴 TOKEN INVÁLIDO
     return res.status(401).json({
       message: "Token inválido",
       code: "TOKEN_INVALID",

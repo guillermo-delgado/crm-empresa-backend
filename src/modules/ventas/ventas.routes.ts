@@ -1,4 +1,7 @@
 import { Router } from "express";
+import { requireJornadaActiva } from "../../middlewares/requireJornadaActiva";
+
+
 import {
   crearVenta,
   libroVentas,
@@ -7,9 +10,7 @@ import {
   obtenerVentaPorId,
 } from "./ventas.controller";
 
-
 import { authMiddleware } from "../../middlewares/auth";
-import { adminOnly } from "../../middlewares/role.middleware";
 import {
   validateCreateVenta,
   validateEditVenta,
@@ -20,10 +21,12 @@ const router = Router();
 /* =========================
    CREAR VENTA
    - Empleado y Admin
+   - 🔒 Requiere jornada activa
 ========================= */
 router.post(
   "/",
   authMiddleware,
+  requireJornadaActiva,
   validateCreateVenta,
   crearVenta
 );
@@ -31,7 +34,6 @@ router.post(
 /* =========================
    LIBRO DE VENTAS
    - Autenticado
-   - Filtrado por rol en controller
 ========================= */
 router.get(
   "/libro",
@@ -42,11 +44,13 @@ router.get(
 /* =========================
    EDITAR VENTA
    - Admin: edita directo
-   - Empleado: crea solicitud (lógica en controller)
+   - Empleado: crea solicitud
+   - 🔒 Requiere jornada activa
 ========================= */
 router.put(
   "/:id",
   authMiddleware,
+  requireJornadaActiva,
   validateEditVenta,
   editarVenta
 );
@@ -54,11 +58,13 @@ router.put(
 /* =========================
    ELIMINAR VENTA
    - Admin: elimina directo
-   - Empleado: crea solicitud (lógica en controller)
+   - Empleado: crea solicitud
+   - 🔒 Requiere jornada activa
 ========================= */
 router.delete(
   "/:id",
   authMiddleware,
+  requireJornadaActiva,
   eliminarVenta
 );
 
@@ -75,15 +81,16 @@ router.get(
 /* =========================
    MARCAR REVISIÓN COMO LEÍDA
    - Empleado propietario
+   - 🔒 Requiere jornada activa
 ========================= */
 router.patch(
   "/:id/marcar-revision-leida",
   authMiddleware,
+  requireJornadaActiva,
   async (req, res) => {
     const { marcarRevisionLeida } = await import("./ventas.controller");
     return marcarRevisionLeida(req, res);
   }
 );
-
 
 export default router;

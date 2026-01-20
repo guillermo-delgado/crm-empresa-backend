@@ -6,6 +6,14 @@ import userRoutes from "./routes/user.routes";
 import ventasRoutes from "./modules/ventas/ventas.routes";
 import solicitudesRoutes from "./modules/solicitudes/solicitudes.routes";
 
+// ⏱️ Horario trabajador
+import horarioRoutes from "./modules/horario/horario.routes";
+
+// 🖥️ Horario CRM (ADMIN)
+import horarioCrmRoutes from "./modules/horario/horario.crm.routes";
+import fichajesCrmRoutes from "./modules/horario/fichajes.crm.routes";
+
+
 const app = express();
 
 /* =========================
@@ -35,11 +43,19 @@ app.use(
 app.use(express.json());
 
 /* =========================
-   ROUTES (NO TOCAR)
+   ROUTES
 ========================= */
 app.use("/api/auth", authRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/ventas", ventasRoutes);
 app.use("/api/solicitudes", solicitudesRoutes);
+
+// 👷 Trabajador
+app.use("/api/horario", horarioRoutes);
+
+// 🧑‍💼 CRM / Admin
+app.use("/api/crm/horario", horarioCrmRoutes);
+app.use("/api/crm/fichajes", fichajesCrmRoutes);
+
 
 export default app;
