@@ -157,7 +157,10 @@ router.delete("/:fichajeId", async (req, res) => {
       });
     }
 
-    const fichaje = registro.fichajes.id(fichajeId);
+    const fichaje = registro.fichajes.find(
+  (f: any) => f._id?.toString() === fichajeId
+);
+
     if (!fichaje) {
       return res.status(404).json({
         message: "Fichaje no encontrado",
