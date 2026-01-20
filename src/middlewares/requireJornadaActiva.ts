@@ -64,8 +64,8 @@ export const requireJornadaActiva = async (
     /* =========================
        📅 Registro de HOY
     ========================= */
-    const hoy = new Date();
-    hoy.setHours(0, 0, 0, 0);
+    const hoy = new Date().toLocaleDateString("sv-SE"); // YYYY-MM-DD
+
 
     const registro = await RegistroHorario.findOne({
       usuario: req.user.id,
