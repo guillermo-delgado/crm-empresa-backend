@@ -156,9 +156,11 @@ export const editarVenta = async (req: Request, res: Response) => {
 
       try {
         getIO().emit("SOLICITUD_CREADA", {
-          solicitudId: solicitud._id,
-          tipo: "EDITAR_VENTA",
-        });
+  solicitudId: solicitud._id,
+  ventaId: id,            // 🔑 CLAVE
+  tipo: "EDITAR_VENTA",
+});
+
       } catch {}
 // 🟡 MARCAR VENTA COMO PENDIENTE DE REVISIÓN
 await Venta.findByIdAndUpdate(id, {
@@ -212,11 +214,13 @@ await Venta.findByIdAndUpdate(id, {
     }
 
     /* 🔔 EVENTO VENTA ACTUALIZADA */
-    try {
-      getIO().emit("VENTA_ACTUALIZADA", { ventaId: venta._id });
-    } catch {}
+   try {
+  const ventaActualizada = await Venta.findById(venta._id).populate("createdBy");
+  getIO().emit("VENTA_ACTUALIZADA", ventaActualizada);
+} catch {}
 
-    res.json(venta);
+res.json(venta);
+
   } catch (error: any) {
     console.error("EDITAR VENTA ERROR:", error.message);
     res.status(400).json({
@@ -246,9 +250,11 @@ export const eliminarVenta = async (req: Request, res: Response) => {
 
       try {
         getIO().emit("SOLICITUD_CREADA", {
-          solicitudId: solicitud._id,
-          tipo: "ELIMINAR_VENTA",
-        });
+  solicitudId: solicitud._id,
+  ventaId: id,            // 🔑 CLAVE
+  tipo: "ELIMINAR_VENTA",
+});
+
       } catch {}
 
       await Venta.findByIdAndUpdate(id, {
@@ -341,6 +347,39 @@ export const marcarRevisionLeida = async (req: Request, res: Response) => {
     console.error("ERROR marcarRevisionLeida:", error);
     res.status(500).json({
       message: "Error limpiando estado de revisión",
+    });
+  }
+};
+
+/* =========================
+   OBTENER SOLICITUD PENDIENTE POR VENTA (EMPLEADO)
+========================= */
+export const obtenerSolicitudPendientePorVenta = async (
+  req: Request,
+  res: Response
+) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ message: "No autenticado" });
+    }
+
+    const { ventaId } = req.params;
+
+    const solicitud = await Solicitud.findOne({
+      venta: ventaId,
+      tipo: "EDITAR_VENTA",
+      estado: { $ne: "resuelta" }, // o como lo marques tú
+    }).sort({ createdAt: -1 });
+
+    if (!solicitud) {
+      return res.status(404).json({ message: "Sin solicitud pendiente" });
+    }
+
+    res.json(solicitud);
+  } catch (error) {
+    console.error("ERROR obtenerSolicitudPendientePorVenta:", error);
+    res.status(500).json({
+      message: "Error obteniendo solicitud pendiente",
     });
   }
 };

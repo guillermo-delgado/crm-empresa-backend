@@ -1,5 +1,7 @@
 import { Router } from "express";
 import { requireJornadaActiva } from "../../middlewares/requireJornadaActiva";
+import { obtenerSolicitudPendientePorVenta } from "./ventas.controller";
+
 
 
 import {
@@ -9,6 +11,7 @@ import {
   editarVenta,
   obtenerVentaPorId,
 } from "./ventas.controller";
+
 
 import { authMiddleware } from "../../middlewares/auth";
 import {
@@ -41,6 +44,8 @@ router.get(
   libroVentas
 );
 
+
+
 /* =========================
    EDITAR VENTA
    - Admin: edita directo
@@ -67,6 +72,16 @@ router.delete(
   requireJornadaActiva,
   eliminarVenta
 );
+
+/* =========================
+   OBTENER SOLICITUD PENDIENTE DE EDICIÓN (EMPLEADO)
+========================= */
+router.get(
+  "/:ventaId/solicitud-pendiente",
+  authMiddleware,
+  obtenerSolicitudPendientePorVenta
+);
+
 
 /* =========================
    OBTENER VENTA POR ID

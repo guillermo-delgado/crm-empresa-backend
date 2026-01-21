@@ -45,9 +45,6 @@ export const listarSolicitudesPendientes = async (
    APROBAR SOLICITUD
 ========================= */
 export const aprobarSolicitud = async (req: any, res: any) => {
-  console.log("➡️ APROBAR SOLICITUD", req.params.id);
-  console.log("➡️ USER", req.user);
-
   try {
     if (!req.user || req.user.role !== "admin") {
       return res.status(403).json({ message: "Solo administradores" });
@@ -60,23 +57,22 @@ export const aprobarSolicitud = async (req: any, res: any) => {
       return res.status(404).json({ message: "Solicitud no válida" });
     }
 
-    console.log("🟡 TIPO SOLICITUD:", solicitud.tipo);
-
     const ventaId =
       typeof solicitud.venta === "object"
-        ? solicitud.venta._id
+        ? solicitud.venta.toString()
         : solicitud.venta;
 
     switch (solicitud.tipo) {
       case "ELIMINAR_VENTA": {
-        await Venta.findByIdAndDelete(ventaId);
+  await Venta.findByIdAndDelete(ventaId);
 
-        try {
-          getIO().emit("VENTA_ELIMINADA", { ventaId });
-        } catch {}
+  // 🔔 Emitir eliminación (solo ID, correcto)
+  getIO().emit("VENTA_ELIMINADA", {
+    ventaId: ventaId.toString(),
+  });
 
-        break;
-      }
+  break;
+}
 
       case "EDITAR_VENTA": {
         const payload =
@@ -84,81 +80,48 @@ export const aprobarSolicitud = async (req: any, res: any) => {
             ? JSON.parse(JSON.stringify(solicitud.payload))
             : {};
 
-        /* =========================
-           🔒 CAMPOS PROHIBIDOS
-        ========================= */
+        // 🔒 limpiar campos prohibidos
         delete payload.createdBy;
         delete payload.usuario;
         delete payload._id;
         delete payload.id;
 
-        /* =========================
-           🔧 NORMALIZACIÓN
-        ========================= */
         if (payload.primaNeta !== undefined) {
           payload.primaNeta = Number(payload.primaNeta);
         }
 
-        await Venta.findByIdAndUpdate(
-          ventaId,
-          { $set: payload },
-          {
-            runValidators: true,
-          }
-        );
+        // ✅ aplicar cambios
+        await Venta.findByIdAndUpdate(ventaId, { $set: payload });
+        const ventaActualizada = await Venta.findById(ventaId).populate("createdBy");
+getIO().emit("VENTA_ACTUALIZADA", ventaActualizada);
 
-        try {
-          getIO().emit("VENTA_ACTUALIZADA", { ventaId });
-        } catch {}
 
+        // ⛔ NO EMITIR VENTA_ACTUALIZADA AQUÍ
         break;
       }
-
-      default:
-        return res.status(400).json({
-          message: "Tipo de solicitud no soportado",
-          tipo: solicitud.tipo,
-        });
     }
 
-/* =========================
-   ✅ MARCAR APROBADA
-========================= */
-solicitud.estado = "APROBADA";
-await solicitud.save();
+    // ✅ marcar solicitud como aprobada
+    solicitud.estado = "APROBADA";
+    await solicitud.save();
 
-// 🔔 ACTUALIZAR ESTADO VISUAL DE LA VENTA
-await Venta.findByIdAndUpdate(ventaId, {
-  estadoRevision: "aceptada",
-});
+    // ✅ estado visual definitivo
+    await Venta.findByIdAndUpdate(ventaId, {
+      estadoRevision: "aceptada",
+    });
 
-getIO().emit("SOLICITUD_RESUELTA", {
-  solicitudId: solicitud._id,
-  ventaId: solicitud.venta,
-  estado: solicitud.estado,
-});
-
-
-
-    /* =========================
-       🧹 ELIMINAR SOLICITUDES ANTIGUAS
-       (CLAVE DEL PROBLEMA)
-    ========================= */
+    // 🧹 limpiar solicitudes pendientes antiguas
     await Solicitud.deleteMany({
       venta: solicitud.venta,
       estado: "PENDIENTE",
       _id: { $ne: solicitud._id },
     });
 
-    /* =========================
-       🔔 SOCKET GLOBAL
-    ========================= */
-    try {
-      getIO().emit("SOLICITUD_RESUELTA", {
-        solicitudId: solicitud._id,
-        estado: "APROBADA",
-      });
-    } catch {}
+    // 🔔 SOCKET ÚNICO Y CORRECTO
+    getIO().emit("SOLICITUD_RESUELTA", {
+      ventaId,
+      estado: "aceptada",
+    });
 
     return res.json({ message: "Solicitud aprobada" });
   } catch (error) {
@@ -166,6 +129,8 @@ getIO().emit("SOLICITUD_RESUELTA", {
     return res.status(500).json({ message: "Error aprobando solicitud" });
   }
 };
+
+
 
 
 
@@ -185,39 +150,31 @@ export const rechazarSolicitud = async (req: any, res: any) => {
       return res.status(404).json({ message: "Solicitud no válida" });
     }
 
-    /* =========================
-       ❌ MARCAR SOLICITUD RECHAZADA
-    ========================= */
+    const ventaId =
+      typeof solicitud.venta === "object"
+        ? solicitud.venta.toString()
+        : solicitud.venta;
+
+    // ❌ marcar solicitud rechazada
     solicitud.estado = "RECHAZADA";
     await solicitud.save();
 
-    /* =========================
-       🔴 ACTUALIZAR VENTA (CLAVE)
-    ========================= */
-    await Venta.findByIdAndUpdate(solicitud.venta, {
+    // 🔴 estado visual definitivo
+    await Venta.findByIdAndUpdate(ventaId, {
       estadoRevision: "rechazada",
     });
 
-    /* =========================
-       🧹 ELIMINAR RESTO DE PENDIENTES
-    ========================= */
+    // 🧹 eliminar otras pendientes
     await Solicitud.deleteMany({
       venta: solicitud.venta,
       estado: "PENDIENTE",
       _id: { $ne: solicitud._id },
     });
 
-    /* =========================
-       🔔 SOCKETS
-    ========================= */
-    getIO().emit("VENTA_ACTUALIZADA", {
-      ventaId: solicitud.venta,
-    });
-
+    // 🔔 SOCKET ÚNICO (EL IMPORTANTE)
     getIO().emit("SOLICITUD_RESUELTA", {
-      solicitudId: solicitud._id,
-      ventaId: solicitud.venta,
-      estado: "RECHAZADA",
+      ventaId,
+      estado: "rechazada",
     });
 
     return res.json({ message: "Solicitud rechazada" });
@@ -226,5 +183,7 @@ export const rechazarSolicitud = async (req: any, res: any) => {
     return res.status(500).json({ message: "Error rechazando solicitud" });
   }
 };
+
+
 
 
