@@ -12,9 +12,7 @@ export const login = async (req: Request, res: Response) => {
     const { login, password } = req.body;
 
     if (!login || !password) {
-      return res.status(400).json({
-        message: "Usuario y contraseña obligatorios",
-      });
+      return res.status(400).json({ message: "Usuario y contraseña obligatorios" });
     }
 
     const user = await User.findOne({
@@ -24,46 +22,62 @@ export const login = async (req: Request, res: Response) => {
       ],
     }).select("+password");
 
-    if (!user) {
+    if (!user || !user.activo) {
       return res.status(401).json({ message: "Credenciales incorrectas" });
     }
 
-    if (!user.activo) {
-      return res.status(403).json({ message: "Usuario desactivado" });
-    }
-
     const validPassword = await bcrypt.compare(password, user.password);
-
     if (!validPassword) {
       return res.status(401).json({ message: "Credenciales incorrectas" });
     }
 
-    /* 🔐 SESIÓN CRM (la primera manda) */
-    let sessionId = user.crmSessionId;
+    /* =========================
+       📱 Detectar móvil
+    ========================= */
+    const ua = req.headers["user-agent"] || "";
+    const isMobile = /android|iphone|ipad|mobile/i.test(ua);
 
-    if (!sessionId) {
-      sessionId = crypto.randomUUID();
-
-      // ⚠️ updateOne → NO dispara validaciones del modelo
+    /* =========================
+       🔐 CRM SESSION (desktop)
+    ========================= */
+    let crmSessionId = user.crmSessionId;
+    if (!crmSessionId && !isMobile) {
+      crmSessionId = crypto.randomUUID();
       await User.updateOne(
         { _id: user._id },
-        { $set: { crmSessionId: sessionId } }
+        { $set: { crmSessionId } }
       );
     }
 
-    /* 🔑 JWT */
-    const token = jwt.sign(
+    /* =========================
+       🔑 ACCESS TOKEN
+    ========================= */
+    const accessToken = jwt.sign(
       {
         id: user._id,
         role: user.role,
-        crmSessionId: sessionId,
+        crmSessionId,
       },
       process.env.JWT_SECRET!,
-      { expiresIn: "8h" }
+      { expiresIn: isMobile ? "2h" : "8h" }
     );
 
+    /* =========================
+       🔁 REFRESH TOKEN (solo móvil)
+    ========================= */
+    let refreshToken: string | undefined;
+
+    if (isMobile) {
+      refreshToken = crypto.randomUUID();
+      await User.updateOne(
+        { _id: user._id },
+        { $set: { refreshToken } }
+      );
+    }
+
     return res.json({
-      token,
+      token: accessToken,
+      refreshToken,
       user: {
         id: user._id,
         nombre: user.nombre,
@@ -74,38 +88,55 @@ export const login = async (req: Request, res: Response) => {
     });
   } catch (error) {
     console.error("❌ Error en login:", error);
-    return res.status(500).json({
-      message: "Error al iniciar sesión",
-    });
+    return res.status(500).json({ message: "Error al iniciar sesión" });
+  }
+};
+
+/* =========================
+   REFRESH TOKEN (MÓVIL)
+========================= */
+export const refreshToken = async (req: Request, res: Response) => {
+  try {
+    const { refreshToken } = req.body;
+
+    if (!refreshToken) {
+      return res.status(401).json({ message: "No autorizado" });
+    }
+
+    const user = await User.findOne({ refreshToken });
+
+    if (!user || !user.activo) {
+      return res.status(401).json({ message: "Sesión no válida" });
+    }
+
+    const newAccessToken = jwt.sign(
+      {
+        id: user._id,
+        role: user.role,
+      },
+      process.env.JWT_SECRET!,
+      { expiresIn: "2h" }
+    );
+
+    return res.json({ token: newAccessToken });
+  } catch (error) {
+    console.error("❌ Error refresh token:", error);
+    return res.status(500).json({ message: "Error renovando sesión" });
   }
 };
 
 /* =========================
    LOGOUT
-   - Libera la sesión CRM
 ========================= */
 export const logout = async (req: any, res: Response) => {
-  try {
-    if (!req.user) {
-      return res.status(401).json({
-        message: "No autenticado",
-      });
-    }
-
-    // ⚠️ aquí también usamos updateOne (más limpio)
-    await User.updateOne(
-      { _id: req.user.id },
-      { $set: { crmSessionId: null } }
-    );
-
-    return res.json({
-      message: "Sesión cerrada correctamente",
-    });
-  } catch (error) {
-    console.error("❌ Error en logout:", error);
-
-    return res.status(500).json({
-      message: "Error cerrando sesión",
-    });
+  if (!req.user) {
+    return res.status(401).json({ message: "No autenticado" });
   }
+
+  await User.updateOne(
+    { _id: req.user.id },
+    { $set: { crmSessionId: null, refreshToken: null } }
+  );
+
+  return res.json({ message: "Sesión cerrada correctamente" });
 };

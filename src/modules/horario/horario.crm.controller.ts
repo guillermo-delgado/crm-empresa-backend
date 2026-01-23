@@ -2,10 +2,16 @@ import { Request, Response } from "express";
 import RegistroHorario from "../../models/RegistroHorario";
 import User from "../../models/User";
 
+type FichajeDia = {
+  tipo: "ENTRADA" | "SALIDA";
+  hora: string;
+};
+
 
 /* =========================
    HELPERS
 ========================= */
+
 const calcularMinutos = (fichajes: any[]) => {
   const activos = fichajes
     .filter((f) => f.activo !== false)
@@ -61,6 +67,16 @@ export const obtenerEmpleados = async (
   }
 };
 
+
+
+const parseHora = (hora: string): number => {
+  if (!hora || !hora.includes(":")) return 0;
+  const [h, m] = hora.split(":").map(Number);
+  return h * 60 + m;
+};
+
+
+
 /* =========================
    📅 CALENDARIO CRM
    GET /api/horario/crm?mes&empleadoId?
@@ -109,13 +125,18 @@ export const obtenerCalendarioEmpleado = async (
     { usuario: { $exists: false } }, // ✅ CLAVE
   ];
 }
+const registros = await RegistroHorario.find(filtro);
+const mapaRegistros = new Map<string, any>();
 
 
 
-    const registros = await RegistroHorario.find(filtro);
-    const mapaRegistros = new Map(
-  registros.map((r) => [r.fecha, r])
-);
+    
+
+for (const r of registros) {
+  const key = `${r.fecha}__${r.usuario ?? "GLOBAL"}`;
+  mapaRegistros.set(key, r);
+}
+
 
 
     let horasTrabajadas = 0;
@@ -126,17 +147,21 @@ export const obtenerCalendarioEmpleado = async (
 }
 
 
-   const dias: {
+const dias: {
   fecha: string;
   minutosTrabajados: number;
   estado: "VACACIONES" | "DIA_LIBRE" | "BAJA" | "FESTIVO" | null;
   turno: "MANANA" | "TARDE" | "MANANA_TARDE" | null;
   esFinDeSemana: boolean;
+
+  fichajes: FichajeDia[]; // ✅ ESTA LÍNEA ES LA CLAVE
+
   horaEntradaManana: string | null;
   horaSalidaManana: string | null;
   horaEntradaTarde: string | null;
   horaSalidaTarde: string | null;
 }[] = [];
+
 
 
 
@@ -149,14 +174,21 @@ let minutosTeoricosMes = 0;
 for (let d = 1; d <= totalDiasMes; d++) {
   const fecha = `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
 
-  const registro = mapaRegistros.get(fecha);
+  const keyEmpleado = `${fecha}__${empleadoId ?? "GLOBAL"}`;
+const keyGlobal   = `${fecha}__GLOBAL`;
+
+const registro =
+  mapaRegistros.get(keyEmpleado) ??
+  mapaRegistros.get(keyGlobal) ??
+  null;
+
 
 let estado: "VACACIONES" | "DIA_LIBRE" | "BAJA" | "FESTIVO" | null = null;
   let minutosTrabajados = 0;
 
- const filtro: any = {
-  fecha: { $gte: desde, $lte: hasta },
-};
+//  const filtro: any = {
+//   fecha: { $gte: desde, $lte: hasta },
+// };
 
 
  let descuenta = true;
@@ -177,26 +209,32 @@ if (descuenta) {
 
 
 if (registro?.fichajes?.length) {
+  console.log("🧪 DIA USADO:", {
+    fecha,
+    usuario: registro.usuario,
+    fichajes: registro.fichajes.map((f: any) => ({
+  tipo: f.tipo,
+  hora: f.hora
+}))
+
+
+  });
   const fichajesActivos = registro.fichajes
-    .filter((f: any) => f.activo)
-    .sort(
-      (a: any, b: any) =>
-        new Date(a.hora).getTime() - new Date(b.hora).getTime()
-    );
+  .filter((f: any) => f.activo !== false && typeof f.hora === "string")
+  .sort(
+    (a: any, b: any) => parseHora(a.hora) - parseHora(b.hora)
+  );
 
-  for (let i = 0; i < fichajesActivos.length; i += 2) {
-    const entrada = fichajesActivos[i];
-    const salida = fichajesActivos[i + 1];
+for (let i = 0; i < fichajesActivos.length; i += 2) {
+  const entrada = fichajesActivos[i];
+  const salida = fichajesActivos[i + 1];
 
-    if (entrada && salida) {
-      const diff =
-        (new Date(salida.hora).getTime() -
-          new Date(entrada.hora).getTime()) /
-        60000;
+  if (!entrada || !salida) continue;
 
-      if (diff > 0) minutosTrabajados += diff;
-    }
-  }
+  const diff = parseHora(salida.hora) - parseHora(entrada.hora);
+  if (diff > 0) minutosTrabajados += diff;
+}
+
 }
 
 // 📅 Día final enviado al CRM
@@ -206,6 +244,25 @@ dias.push({
   estado: registro?.estado ?? null,
   turno: registro?.turno ?? null,
   esFinDeSemana: esFinDeSemana(fecha),
+
+  // ⬇️ ESTO ES LO NUEVO (FICHAJES REALES)
+ fichajes: registro?.fichajes
+  ? registro.fichajes
+      .filter((f: any) => f.activo !== false)
+      .map((f: any) => ({
+  tipo: f.tipo,
+  hora:
+    typeof f.hora === "string" && /^\d{2}:\d{2}$/.test(f.hora)
+      ? f.hora
+      : new Date(f.hora).toISOString().slice(11, 16),
+}))
+
+      .filter((f: { hora: string }) => f.hora !== "00:00")
+  : [],
+
+
+
+  // ⬇️ ESTO SE QUEDA (JORNADA TEÓRICA)
   horaEntradaManana: registro?.horaEntradaManana ?? null,
   horaSalidaManana: registro?.horaSalidaManana ?? null,
   horaEntradaTarde: registro?.horaEntradaTarde ?? null,
@@ -215,10 +272,11 @@ dias.push({
 
 
 
+
 }
 
 const balanceMinutos = horasTrabajadas - minutosTeoricosMes;
-
+console.log("🟢 BACKEND DIA EJEMPLO:", dias.find(d => d.fichajes?.length));
     return res.json({
       dias,
       horasTrabajadas,
@@ -271,7 +329,8 @@ const fichaje = registro.fichajes.find(
         .json({ message: "Fichaje inválido" });
     }
 
-    fichaje.hora = new Date(hora);
+   fichaje.hora = hora; // "10:00"
+
 
     registro.minutosTrabajados = calcularMinutos(
       registro.fichajes

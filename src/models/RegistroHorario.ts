@@ -5,9 +5,10 @@ import mongoose, { Document, Schema, Types } from "mongoose";
 ========================= */
 export interface IFichaje {
   tipo: "ENTRADA" | "SALIDA";
-  hora: Date;
+  hora: string;      // ✅ STRING, NO Date
   activo: boolean;
 }
+
 
 export interface IRegistroHorario extends Document {
   usuario: Types.ObjectId | null;
@@ -37,10 +38,11 @@ const FichajeSchema = new mongoose.Schema<IFichaje>(
       required: true,
     },
 
-    hora: {
-      type: Date,
-      required: true,
-    },
+   hora: {
+  type: String, // ⬅️ NO Date
+  required: true,
+},
+
 
     // Permite desactivar fichajes sin borrarlos
     activo: {

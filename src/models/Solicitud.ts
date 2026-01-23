@@ -29,4 +29,18 @@ const solicitudSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+/**
+ * 🔒 ÍNDICE ÚNICO
+ * - Una sola solicitud pendiente por venta y tipo
+ * - Evita duplicados
+ * - Elimina el bug del badge acumulado
+ */
+solicitudSchema.index(
+  { venta: 1, tipo: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { estado: "PENDIENTE" },
+  }
+);
+
 export default mongoose.model("Solicitud", solicitudSchema);

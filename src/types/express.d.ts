@@ -5,6 +5,7 @@ declare global {
     interface User {
       id: string;
       role: "admin" | "empleado" | "colaborador";
+      nombre: string; 
     }
 
     interface Request {
@@ -14,3 +15,4 @@ declare global {
 }
 
 export {};
+

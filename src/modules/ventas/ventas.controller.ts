@@ -146,31 +146,46 @@ export const editarVenta = async (req: Request, res: Response) => {
     const { id } = req.params;
 
     // 👤 EMPLEADO → crear solicitud
-    if (req.user.role !== "admin") {
-      const solicitud = await Solicitud.create({
-        tipo: "EDITAR_VENTA",
-        venta: id,
-        solicitadoPor: req.user.id,
-        payload: req.body,
-      });
+   // 👤 EMPLEADO → crear solicitud (SI NO EXISTE)
+if (req.user.role !== "admin") {
 
-      try {
-        getIO().emit("SOLICITUD_CREADA", {
-  solicitudId: solicitud._id,
-  ventaId: id,            // 🔑 CLAVE
-  tipo: "EDITAR_VENTA",
-});
+  const existente = await Solicitud.findOne({
+    venta: id,
+    estado: "PENDIENTE",
+    tipo: "EDITAR_VENTA",
+  });
 
-      } catch {}
-// 🟡 MARCAR VENTA COMO PENDIENTE DE REVISIÓN
-await Venta.findByIdAndUpdate(id, {
-  estadoRevision: "pendiente",
-});
+  if (existente) {
+    // 🔒 Ya existe → NO crear otra
+    return res.status(403).json({
+      message: "Ya existe una solicitud pendiente para esta venta",
+    });
+  }
 
-      return res.status(403).json({
-        message: "Solicitud de edición enviada al administrador",
-      });
-    }
+  const solicitud = await Solicitud.create({
+    tipo: "EDITAR_VENTA",
+    venta: id,
+    solicitadoPor: req.user.id,
+    payload: req.body,
+  });
+
+  try {
+    getIO().emit("SOLICITUD_CREADA", {
+      solicitudId: solicitud._id,
+      ventaId: id,
+      tipo: "EDITAR_VENTA",
+    });
+  } catch {}
+
+  await Venta.findByIdAndUpdate(id, {
+    estadoRevision: "pendiente",
+  });
+
+  return res.status(403).json({
+    message: "Solicitud de edición enviada al administrador",
+  });
+}
+
 
    const {
   fechaEfecto,
@@ -241,31 +256,43 @@ export const eliminarVenta = async (req: Request, res: Response) => {
     const { id } = req.params;
 
     // 👤 EMPLEADO → crear solicitud
-    if (req.user.role !== "admin") {
-      const solicitud = await Solicitud.create({
-        tipo: "ELIMINAR_VENTA",
-        venta: id,
-        solicitadoPor: req.user.id,
-      });
+   if (req.user.role !== "admin") {
 
-      try {
-        getIO().emit("SOLICITUD_CREADA", {
-  solicitudId: solicitud._id,
-  ventaId: id,            // 🔑 CLAVE
-  tipo: "ELIMINAR_VENTA",
-});
+  const existente = await Solicitud.findOne({
+    venta: id,
+    estado: "PENDIENTE",
+    tipo: "ELIMINAR_VENTA",
+  });
 
-      } catch {}
+  if (existente) {
+    return res.status(403).json({
+      message: "Ya existe una solicitud pendiente para esta venta",
+    });
+  }
 
-      await Venta.findByIdAndUpdate(id, {
-  estadoRevision: "pendiente",
-});
+  const solicitud = await Solicitud.create({
+    tipo: "ELIMINAR_VENTA",
+    venta: id,
+    solicitadoPor: req.user.id,
+  });
 
+  try {
+    getIO().emit("SOLICITUD_CREADA", {
+      solicitudId: solicitud._id,
+      ventaId: id,
+      tipo: "ELIMINAR_VENTA",
+    });
+  } catch {}
 
-      return res.status(403).json({
-        message: "Solicitud de eliminación enviada al administrador",
-      });
-    }
+  await Venta.findByIdAndUpdate(id, {
+    estadoRevision: "pendiente",
+  });
+
+  return res.status(403).json({
+    message: "Solicitud de eliminación enviada al administrador",
+  });
+}
+
 
     const venta = await Venta.findByIdAndDelete(id);
 
@@ -366,10 +393,11 @@ export const obtenerSolicitudPendientePorVenta = async (
     const { ventaId } = req.params;
 
     const solicitud = await Solicitud.findOne({
-      venta: ventaId,
-      tipo: "EDITAR_VENTA",
-      estado: { $ne: "resuelta" }, // o como lo marques tú
-    }).sort({ createdAt: -1 });
+  venta: ventaId,
+  tipo: "EDITAR_VENTA",
+  estado: "PENDIENTE",
+}).sort({ createdAt: -1 });
+
 
     if (!solicitud) {
       return res.status(404).json({ message: "Sin solicitud pendiente" });
@@ -383,3 +411,6 @@ export const obtenerSolicitudPendientePorVenta = async (
     });
   }
 };
+
+
+

@@ -41,6 +41,7 @@ router.post(
 router.get(
   "/libro",
   authMiddleware,
+  requireJornadaActiva,
   libroVentas
 );
 
@@ -79,7 +80,8 @@ router.delete(
 router.get(
   "/:ventaId/solicitud-pendiente",
   authMiddleware,
-  obtenerSolicitudPendientePorVenta
+  obtenerSolicitudPendientePorVenta,
+  requireJornadaActiva,
 );
 
 
@@ -90,7 +92,8 @@ router.get(
 router.get(
   "/:id",
   authMiddleware,
-  obtenerVentaPorId
+  obtenerVentaPorId,
+  requireJornadaActiva,
 );
 
 /* =========================

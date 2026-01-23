@@ -13,11 +13,15 @@ export interface IUser extends Document {
   // ⏱️ CONFIGURACIÓN LABORAL
   horasContratadasSemana: number;
   maxDiasVacaciones: number;
-    balanceMinutos?: number;
+  balanceMinutos?: number;
 
+  // 🔐 Sesiones
+  crmSessionId?: string | null;   // Desktop
+ refreshToken: {
+  type: String,
+  default: null,
+},
 
-  // 🔐 Sesión CRM activa
-  crmSessionId?: string | null;
 
   createdAt: Date;
   updatedAt: Date;
@@ -92,18 +96,24 @@ const UserSchema = new Schema<IUser>(
       default: 30,
       min: 0,
     },
-        balanceMinutos: {
+
+    balanceMinutos: {
       type: Number,
       default: 0,
     },
 
-
     /* =========================
-       SESIÓN CRM
+       SESIONES
     ========================= */
     crmSessionId: {
       type: String,
       default: null,
+    },
+
+    refreshToken: {
+      type: String,
+      default: null,
+      index: true, // 🔥 importante para buscar rápido
     },
   },
   {

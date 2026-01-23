@@ -47,7 +47,7 @@ export const authMiddleware = async (
     ========================= */
     if (
       req.originalUrl.startsWith("/crm") &&
-      user.crmSessionId && // hay sesión CRM registrada
+      user.crmSessionId &&
       decoded.crmSessionId !== user.crmSessionId
     ) {
       return res.status(403).json({
@@ -56,15 +56,19 @@ export const authMiddleware = async (
       });
     }
 
-    // 👤 Usuario autenticado
+    // 👤 Usuario autenticado (ACCESS TOKEN VÁLIDO)
     req.user = {
       id: user._id.toString(),
       role: user.role,
+      nombre: user.nombre,
     };
 
     next();
   } catch (error) {
-    // 🔴 TOKEN CADUCADO
+    /* =========================
+       🔴 TOKEN CADUCADO
+       → el frontend intentará REFRESH
+    ========================= */
     if (error instanceof TokenExpiredError) {
       return res.status(401).json({
         message: "Token caducado",
@@ -72,7 +76,9 @@ export const authMiddleware = async (
       });
     }
 
-    // 🔴 TOKEN INVÁLIDO
+    /* =========================
+       🔴 TOKEN INVÁLIDO
+    ========================= */
     return res.status(401).json({
       message: "Token inválido",
       code: "TOKEN_INVALID",
@@ -80,6 +86,9 @@ export const authMiddleware = async (
   }
 };
 
+/* =========================
+   🔐 SOLO ADMIN
+========================= */
 export const adminOnly = (
   req: Request,
   res: Response,

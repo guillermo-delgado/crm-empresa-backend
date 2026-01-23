@@ -52,6 +52,24 @@ export const requireJornadaActiva = async (
       return next();
     }
 
+/* =========================
+   📱 BLOQUEO MÓVIL / TABLET
+   - Empleados NO pueden acceder
+========================= */
+const userAgent = req.headers["user-agent"] || "";
+
+const esMovilOTablet =
+  /android|iphone|ipad|ipod|mobile|tablet/i.test(userAgent);
+
+if (req.user.role === "empleado" && esMovilOTablet) {
+  await registrarFraude(req, "ACCESO_MOBILE_CRM");
+
+  return res.status(403).json({
+    message: "Acceso no permitido desde dispositivos móviles",
+  });
+}
+
+
     /* =========================
        👤 Solo EMPLEADOS
     ========================= */
@@ -83,18 +101,30 @@ export const requireJornadaActiva = async (
       });
     }
 
-    /* =========================
-       ⏱️ Último fichaje
-    ========================= */
-    const ultimo = registro.fichajes[registro.fichajes.length - 1];
+/* =========================
+   ⏱️ Último fichaje ACTIVO
+========================= */
+const fichajesActivos = registro.fichajes.filter(
+  (f: any) => f.activo !== false
+);
 
-    if (ultimo.tipo !== "ENTRADA") {
-      await registrarFraude(req, "FUERA_JORNADA");
+if (!fichajesActivos.length) {
+  await registrarFraude(req, "SIN_JORNADA_ACTIVA");
 
-      return res.status(403).json({
-        message: "Fuera de jornada",
-      });
-    }
+  return res.status(403).json({
+    message: "Fuera de jornada",
+  });
+}
+
+const ultimo = fichajesActivos[fichajesActivos.length - 1];
+
+if (ultimo.tipo !== "ENTRADA") {
+  await registrarFraude(req, "FUERA_JORNADA");
+
+  return res.status(403).json({
+    message: "Fuera de jornada",
+  });
+}
 
     /* =========================
        ✅ Jornada activa
