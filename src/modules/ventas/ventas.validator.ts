@@ -18,6 +18,7 @@ export const validateCreateVenta = (
     ramo,
     numeroPoliza,
     tomador,
+    documentoFiscal,
     primaNeta,
     formaPago,
     actividad,
@@ -30,6 +31,7 @@ export const validateCreateVenta = (
     ramo,
     numeroPoliza,
     tomador,
+    documentoFiscal,
     primaNeta,
     formaPago,
     actividad,
@@ -62,14 +64,25 @@ export const validateCreateVenta = (
     });
   }
 
+  if (typeof documentoFiscal !== "string" || documentoFiscal.trim().length < 9) {
+  return res.status(400).json({
+    message: "El NIF / NIE / CIF no es válido",
+  });
+}
+
+
   // 5️⃣ Actividad válida
-  const actividadesPermitidas = [
-    "SGC",
-    "OFICINA",
-    "TELEFONICO",
-    "INTERNET",
-    "RED PERSONAL",
-  ];
+ const actividadesPermitidas = [
+  "RECOMENDADO",
+  "SGC",
+  "OFICINA",
+  "TELEFONICO",
+  "INTERNET",
+  "RED PERSONAL",
+  "FINCAS",
+  "COLABORADORES",
+];
+
 
   if (!actividadesPermitidas.includes(actividad)) {
     return res.status(400).json({
@@ -82,17 +95,21 @@ export const validateCreateVenta = (
 };
 
 export const validateEditVenta = (
+  
   req: Request,
   res: Response,
   next: NextFunction
 ) => {
+  console.log("🧪 VALIDATE EDIT BODY:", req.body);
+
   const {
     fechaEfecto,
     primaNeta,
     actividad,
+    documentoFiscal,
   } = req.body;
 
-  // Fecha (si viene)
+  // 📅 Fecha (si viene)
   if (fechaEfecto) {
     const fecha = new Date(fechaEfecto);
     if (isNaN(fecha.getTime())) {
@@ -102,7 +119,7 @@ export const validateEditVenta = (
     }
   }
 
-  // Prima (si viene)
+  // 💰 Prima (si viene)
   if (primaNeta !== undefined) {
     const prima = Number(primaNeta);
     if (isNaN(prima) || prima <= 0) {
@@ -112,14 +129,30 @@ export const validateEditVenta = (
     }
   }
 
-  // Actividad (si viene)
+  // 🆔 Documento fiscal (si viene)
+if (documentoFiscal !== undefined) {
+  const doc = documentoFiscal.trim();
+
+  if (doc !== "" && doc.length < 9) {
+    return res.status(400).json({
+      message: "El NIF / NIE / CIF no es válido",
+    });
+  }
+}
+
+
+
+  // 🏷️ Actividad (si viene)
   if (actividad) {
     const actividadesPermitidas = [
+      "RECOMENDADO",
       "SGC",
       "OFICINA",
       "TELEFONICO",
       "INTERNET",
       "RED PERSONAL",
+      "FINCAS",
+      "COLABORADORES",
     ];
 
     if (!actividadesPermitidas.includes(actividad)) {
@@ -132,3 +165,4 @@ export const validateEditVenta = (
 
   next();
 };
+

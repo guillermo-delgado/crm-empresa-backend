@@ -19,6 +19,7 @@ export const crearVenta = async (req: Request, res: Response) => {
       aseguradora,
       ramo,
       numeroPoliza,
+      documentoFiscal,
       tomador,
       primaNeta,
       formaPago,
@@ -53,6 +54,7 @@ export const crearVenta = async (req: Request, res: Response) => {
       aseguradora,
       ramo,
       numeroPoliza,
+      documentoFiscal,
       tomador,
       primaNeta: Number(primaNeta),
       formaPago,
@@ -192,6 +194,7 @@ if (req.user.role !== "admin") {
   aseguradora,
   ramo,
   numeroPoliza,
+  documentoFiscal,
   tomador,
   primaNeta,
   formaPago,
@@ -211,7 +214,18 @@ if (req.user.role !== "admin") {
     if (fechaEfecto) update.fechaEfecto = fechaEfecto;
     if (aseguradora) update.aseguradora = aseguradora;
     if (ramo) update.ramo = ramo;
-    if (numeroPoliza) update.numeroPoliza = numeroPoliza;
+    if (
+  numeroPoliza &&
+  numeroPoliza !== (await Venta.findById(id))?.numeroPoliza
+) {
+  update.numeroPoliza = numeroPoliza;
+}
+
+if (documentoFiscal !== undefined) {
+  const doc = documentoFiscal.trim();
+  if (doc !== "") update.documentoFiscal = doc;
+}
+
     if (tomador) update.tomador = tomador;
     if (primaNeta !== undefined) update.primaNeta = Number(primaNeta);
     if (formaPago) update.formaPago = formaPago;
@@ -413,4 +427,35 @@ export const obtenerSolicitudPendientePorVenta = async (
 };
 
 
+export const buscarVentas = async (req: Request, res: Response) => {
+  try {
+    if (!req.user || req.user.role !== "admin") {
+      return res.status(403).json({ message: "No autorizado" });
+    }
+
+    const { q } = req.query;
+
+    if (!q || typeof q !== "string" || q.trim().length < 2) {
+      return res.json([]);
+    }
+
+    const regex = new RegExp(q.trim(), "i");
+
+    const ventas = await Venta.find({
+      $or: [
+        { tomador: regex },
+        { numeroPoliza: regex },
+        { documentoFiscal: regex },
+      ],
+    })
+      .sort({ fechaEfecto: -1 })
+      .limit(50)
+      .populate("createdBy", "nombre");
+
+    res.json(ventas);
+  } catch (error) {
+    console.error("ERROR buscarVentas:", error);
+    res.status(500).json({ message: "Error en búsqueda de ventas" });
+  }
+};
 

@@ -28,6 +28,13 @@ const VentaSchema = new mongoose.Schema(
       required: true,
     },
 
+    documentoFiscal: {
+  type: String,
+  required: false,
+  trim: true,
+},
+
+
     primaNeta: {
       type: Number,
       required: true,
@@ -39,11 +46,22 @@ const VentaSchema = new mongoose.Schema(
     },
 
     /* === NUEVO CAMPO: ACTIVIDAD === */
-    actividad: {
-      type: String,
-      enum: ["SGC", "OFICINA", "TELEFONICO", "INTERNET", "RED PERSONAL"],
-      required: true,
-    },
+actividad: {
+  type: String,
+  enum: [
+    "RECOMENDADO",
+    "SGC",
+    "OFICINA",
+    "TELEFONICO",
+    "INTERNET",
+    "RED PERSONAL",
+    "FINCAS",
+    "COLABORADORES",
+  ],
+  required: true,
+},
+
+
 
     /* === NUEVO CAMPO: OBSERVACIONES (NO obligatorio) === */
     observaciones: {

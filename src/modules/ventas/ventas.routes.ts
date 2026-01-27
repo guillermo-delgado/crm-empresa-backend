@@ -10,6 +10,7 @@ import {
   eliminarVenta,
   editarVenta,
   obtenerVentaPorId,
+  buscarVentas, 
 } from "./ventas.controller";
 
 
@@ -44,6 +45,15 @@ router.get(
   requireJornadaActiva,
   libroVentas
 );
+
+/* =========================
+   BUSCADOR
+   - PÓLIZA
+   - NIF, NIE, CIF
+   - NOMBRE
+========================= */
+
+router.get("/buscar", authMiddleware, buscarVentas);
 
 
 
