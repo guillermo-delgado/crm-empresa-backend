@@ -26,4 +26,7 @@ router.post("/:id/aprobar", aprobarSolicitud);
 ========================= */
 router.post("/:id/rechazar", rechazarSolicitud);
 
+
+
+
 export default router;

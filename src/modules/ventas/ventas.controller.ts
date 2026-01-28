@@ -472,3 +472,30 @@ export const buscarVentas = async (req: Request, res: Response) => {
   }
 };
 
+/* =========================
+    SOLICITUDES EMPLEADO
+========================= */
+
+export const contarRevisionesEmpleado = async (req: any, res: any) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ count: 0 });
+    }
+
+    const userId = req.user.id;
+
+    const count = await Venta.countDocuments({
+      createdBy: userId,
+      estadoRevision: { $in: ["pendiente", "aceptada", "rechazada"] },
+    });
+
+    return res.json({ count });
+  } catch (error) {
+    console.error("❌ Error contando revisiones empleado:", error);
+    return res.status(500).json({ count: 0 });
+  }
+};
+
+
+
+

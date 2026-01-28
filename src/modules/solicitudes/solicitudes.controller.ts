@@ -185,5 +185,29 @@ export const rechazarSolicitud = async (req: any, res: any) => {
 };
 
 
+/* =========================
+    SOLICITUDES EMPLEADO
+========================= */
 
+export const contarRevisionesEmpleado = async (req: any, res: Response) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ message: "No autenticado" });
+    }
 
+    // 👤 SOLO EMPLEADO
+    if (req.user.role === "admin") {
+      return res.json({ count: 0 });
+    }
+
+    const count = await Venta.countDocuments({
+      createdBy: req.user._id,
+      estadoRevision: { $in: ["aceptada", "rechazada"] },
+    });
+
+    return res.json({ count });
+  } catch (error) {
+    console.error("❌ ERROR CONTANDO REVISIONES:", error);
+    return res.status(500).json({ message: "Error contando revisiones" });
+  }
+};

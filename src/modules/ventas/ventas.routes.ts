@@ -1,8 +1,5 @@
 import { Router } from "express";
 import { requireJornadaActiva } from "../../middlewares/requireJornadaActiva";
-import { obtenerSolicitudPendientePorVenta } from "./ventas.controller";
-
-
 
 import {
   crearVenta,
@@ -10,8 +7,11 @@ import {
   eliminarVenta,
   editarVenta,
   obtenerVentaPorId,
-  buscarVentas, 
+  buscarVentas,
+  obtenerSolicitudPendientePorVenta,
+  contarRevisionesEmpleado, 
 } from "./ventas.controller";
+
 
 
 import { authMiddleware } from "../../middlewares/auth";
@@ -21,6 +21,15 @@ import {
 } from "./ventas.validator";
 
 const router = Router();
+
+/* =========================
+   SOLICITUDES EMPLEADOS
+========================= */
+router.get(
+  "/revisiones-pendientes",
+  authMiddleware,
+  contarRevisionesEmpleado
+);
 
 /* =========================
    CREAR VENTA
@@ -120,5 +129,7 @@ router.patch(
     return marcarRevisionLeida(req, res);
   }
 );
+
+
 
 export default router;
