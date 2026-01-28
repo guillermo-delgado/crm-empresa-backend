@@ -157,12 +157,25 @@ if (req.user.role !== "admin") {
     tipo: "EDITAR_VENTA",
   });
 
-  if (existente) {
-    // 🔒 Ya existe → NO crear otra
-    return res.status(403).json({
-      message: "Ya existe una solicitud pendiente para esta venta",
+if (existente) {
+  existente.payload = req.body;
+  existente.updatedAt = new Date();
+  await existente.save();
+
+  try {
+    getIO().emit("SOLICITUD_ACTUALIZADA", {
+      solicitudId: existente._id,
+      ventaId: id,
+      tipo: "EDITAR_VENTA",
     });
-  }
+  } catch {}
+
+  return res.status(200).json({
+    message: "Solicitud de edición actualizada",
+    solicitud: existente,
+  });
+}
+
 
   const solicitud = await Solicitud.create({
     tipo: "EDITAR_VENTA",
