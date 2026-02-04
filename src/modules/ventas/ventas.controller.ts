@@ -154,7 +154,7 @@ if (req.user.role !== "admin") {
   const existente = await Solicitud.findOne({
     venta: id,
     estado: "PENDIENTE",
-    tipo: "EDITAR_VENTA",
+    // tipo: "EDITAR_VENTA",
   });
 
 if (existente) {
@@ -196,7 +196,7 @@ if (existente) {
     estadoRevision: "pendiente",
   });
 
-  return res.status(403).json({
+  return res.status(202).json({
     message: "Solicitud de edición enviada al administrador",
   });
 }
@@ -218,6 +218,11 @@ if (existente) {
 
 
     const update: any = {};
+    // 🔓 REHABILITAR VENTA (solo admin)
+if (req.user.role === "admin" && req.body.estado === null) {
+  update.estado = null;
+}
+
 
     if (createdBy && req.user.role === "admin") {
   update.createdBy = new mongoose.Types.ObjectId(createdBy);
@@ -288,7 +293,7 @@ export const eliminarVenta = async (req: Request, res: Response) => {
   const existente = await Solicitud.findOne({
     venta: id,
     estado: "PENDIENTE",
-    tipo: "ELIMINAR_VENTA",
+   
   });
 
   if (existente) {
@@ -421,7 +426,7 @@ export const obtenerSolicitudPendientePorVenta = async (
 
     const solicitud = await Solicitud.findOne({
   venta: ventaId,
-  tipo: "EDITAR_VENTA",
+  // tipo: "EDITAR_VENTA",
   estado: "PENDIENTE",
 }).sort({ createdAt: -1 });
 
@@ -498,4 +503,163 @@ export const contarRevisionesEmpleado = async (req: any, res: any) => {
 
 
 
+/* =========================
+   ANULAR VENTA
+========================= */
+
+export const anularVenta = async (req: Request, res: Response) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ message: "No autenticado" });
+    }
+
+    const { id } = req.params;
+
+    /* =====================================================
+       👑 ADMIN → ANULA DIRECTAMENTE (ÚNICO QUE TOCA LA VENTA)
+    ====================================================== */
+    if (req.user.role === "admin") {
+      const venta = await Venta.findByIdAndUpdate(
+        id,
+        {
+          estado: "ANULADA",
+          estadoRevision: null,
+        },
+        { new: true }
+      );
+
+      if (!venta) {
+        return res.status(404).json({ message: "Venta no encontrada" });
+      }
+
+      try {
+        getIO().emit("VENTA_ANULADA", { ventaId: id });
+      } catch {}
+
+      return res.json({
+        message: "Venta anulada directamente por administrador",
+        venta,
+      });
+    }
+
+    /* =====================================================
+       👤 EMPLEADO → SOLO CREA SOLICITUD (NO TOCA LA VENTA)
+    ====================================================== */
+
+    const existente = await Solicitud.findOne({
+      venta: id,
+      estado: "PENDIENTE",
+      
+    });
+
+    if (existente) {
+      return res.status(403).json({
+        message: "Ya existe una solicitud de anulación pendiente",
+      });
+    }
+
+    const solicitud = await Solicitud.create({
+      tipo: "ANULAR_VENTA",
+      venta: id,
+      solicitadoPor: req.user.id,
+      payload: req.body, // 🔥 CLAVE → motivo, fecha, verti
+    });
+
+    // 🔔 SOLO ESTADO VISUAL (NO estado real)
+    await Venta.findByIdAndUpdate(id, {
+      estadoRevision: "pendiente",
+    });
+
+    try {
+      getIO().emit("SOLICITUD_CREADA", {
+        solicitudId: solicitud._id,
+        ventaId: id,
+        tipo: "ANULAR_VENTA",
+      });
+    } catch {}
+
+    // ⚠️ 403 ES CORRECTO → el frontend lo trata como OK
+    return res.status(292).json({
+      message: "Solicitud de anulación enviada al administrador",
+    });
+
+  } catch (error) {
+    console.error("ANULAR VENTA ERROR:", error);
+    return res.status(500).json({
+      message: "Error anulando la venta",
+    });
+  }
+};
+
+
+/* =========================
+   SOLICITAR REHABILITACIÓN
+========================= */
+export const solicitarRehabilitacion = async (req: Request, res: Response) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ message: "No autenticado" });
+    }
+
+    const { id } = req.params;
+
+    // 🔎 Comprobar venta
+    const venta = await Venta.findById(id);
+    if (!venta) {
+      return res.status(404).json({ message: "Venta no encontrada" });
+    }
+
+    // 🔒 Solo se puede rehabilitar si está ANULADA
+    if (venta.estado !== "ANULADA") {
+      return res.status(400).json({
+        message: "La venta no está anulada",
+      });
+    }
+
+    // ❌ Evitar duplicados
+    const existente = await Solicitud.findOne({
+      venta: id,
+      tipo: "REHABILITAR_VENTA",
+      estado: "PENDIENTE",
+    });
+
+    if (existente) {
+      return res.status(202).json({
+        message: "Ya existe una solicitud de rehabilitación pendiente",
+      });
+    }
+
+    // ✅ CREAR SOLICITUD
+    const solicitud = await Solicitud.create({
+      tipo: "REHABILITAR_VENTA",
+      venta: id,
+      solicitadoPor: req.user.id,
+    });
+
+    // 🔔 Estado visual
+    await Venta.findByIdAndUpdate(id, {
+      estadoRevision: "pendiente",
+    });
+
+    // 🔊 Socket
+    try {
+      getIO().emit("SOLICITUD_CREADA", {
+        solicitudId: solicitud._id,
+        ventaId: id,
+        tipo: "REHABILITAR_VENTA",
+      });
+    } catch {}
+
+    // ⚠️ 403 intencionado
+    return res.status(202).json({
+      message: "Solicitud de rehabilitación enviada al administrador",
+      solicitud,
+    });
+  } catch (error) {
+    console.error("REHABILITAR VENTA ERROR:", error);
+    return res.status(500).json({
+      message: "Error solicitando rehabilitación",
+    });
+  }
+};
 

@@ -4,7 +4,7 @@ const solicitudSchema = new mongoose.Schema(
   {
     tipo: {
       type: String,
-      enum: ["EDITAR_VENTA", "ELIMINAR_VENTA"],
+      enum: ["EDITAR_VENTA", "ELIMINAR_VENTA", "ANULAR_VENTA", "REHABILITAR_VENTA"],
       required: true,
     },
     venta: {

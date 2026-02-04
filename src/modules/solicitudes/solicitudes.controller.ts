@@ -34,7 +34,36 @@ export const listarSolicitudesPendientes = async (
       { path: "solicitadoPor", select: "nombre email numma" },
     ]);
 
-    return res.json(solicitudesPopulate);
+const solicitudesConPayload = await Promise.all(
+  solicitudesPopulate.map(async (sol: any) => {
+    if (sol.tipo !== "REHABILITAR_VENTA") {
+      return sol;
+    }
+
+    const ventaId =
+      typeof sol.venta === "object" && sol.venta._id
+        ? sol.venta._id
+        : sol.venta;
+
+    const ultimaAnulacion = await Solicitud.findOne({
+      venta: ventaId,
+      tipo: "ANULAR_VENTA",
+      estado: "APROBADA",
+    }).sort({ createdAt: -1 });
+
+    return {
+      ...sol,
+      payloadOrigen: ultimaAnulacion?.payload ?? null,
+    };
+  })
+);
+
+return res.json(solicitudesConPayload);
+
+
+
+  
+
   } catch (error) {
     console.error("❌ ERROR LISTANDO SOLICITUDES:", error);
     return res.status(500).json({ message: "Error obteniendo solicitudes" });
@@ -62,17 +91,18 @@ export const aprobarSolicitud = async (req: any, res: any) => {
         ? solicitud.venta.toString()
         : solicitud.venta;
 
+    /* =========================
+       ACCIÓN SEGÚN TIPO
+    ========================= */
     switch (solicitud.tipo) {
       case "ELIMINAR_VENTA": {
-  await Venta.findByIdAndDelete(ventaId);
+        await Venta.findByIdAndDelete(ventaId);
 
-  // 🔔 Emitir eliminación (solo ID, correcto)
-  getIO().emit("VENTA_ELIMINADA", {
-    ventaId: ventaId.toString(),
-  });
-
-  break;
-}
+        getIO().emit("VENTA_ELIMINADA", {
+          ventaId: ventaId.toString(),
+        });
+        break;
+      }
 
       case "EDITAR_VENTA": {
         const payload =
@@ -80,7 +110,6 @@ export const aprobarSolicitud = async (req: any, res: any) => {
             ? JSON.parse(JSON.stringify(solicitud.payload))
             : {};
 
-        // 🔒 limpiar campos prohibidos
         delete payload.createdBy;
         delete payload.usuario;
         delete payload._id;
@@ -90,34 +119,97 @@ export const aprobarSolicitud = async (req: any, res: any) => {
           payload.primaNeta = Number(payload.primaNeta);
         }
 
-        // ✅ aplicar cambios
         await Venta.findByIdAndUpdate(ventaId, { $set: payload });
-        const ventaActualizada = await Venta.findById(ventaId).populate("createdBy");
-getIO().emit("VENTA_ACTUALIZADA", ventaActualizada);
 
+        const ventaActualizada = await Venta.findById(ventaId).populate(
+          "createdBy"
+        );
 
-        // ⛔ NO EMITIR VENTA_ACTUALIZADA AQUÍ
+        getIO().emit("VENTA_ACTUALIZADA", ventaActualizada);
+        break;
+      }
+
+      case "ANULAR_VENTA": {
+        const {
+          tipoFecha,
+          fechaAnulacion,
+          motivo,
+          derivadoVerti,
+        } = solicitud.payload || {};
+
+        const update: any = {
+          estado: "ANULADA",
+          motivoAnulacion: motivo || "",
+          derivadoVerti: !!derivadoVerti,
+        };
+
+        if (tipoFecha === "FECHA" && fechaAnulacion) {
+          update.fechaAnulacion = new Date(fechaAnulacion);
+        }
+
+        const venta = await Venta.findByIdAndUpdate(ventaId, update, {
+          new: true,
+        });
+
+        if (!venta) {
+          throw new Error("Venta no encontrada al anular");
+        }
+
+        getIO().emit("VENTA_ANULADA", {
+          ventaId: ventaId.toString(),
+        });
+        break;
+      }
+
+      case "REHABILITAR_VENTA": {
+        const venta = await Venta.findById(ventaId);
+
+        if (!venta || venta.estado !== "ANULADA") {
+          return res.status(400).json({
+            message: "La venta no está anulada",
+          });
+        }
+
+        venta.set("estado", undefined);
+        venta.motivoAnulacion = undefined;
+        venta.fechaAnulacion = undefined;
+        venta.derivadoVerti = false;
+        venta.estadoRevision = null;
+
+        await venta.save();
+
+        getIO().emit("VENTA_REHABILITADA", {
+          ventaId: venta._id.toString(),
+        });
         break;
       }
     }
 
-    // ✅ marcar solicitud como aprobada
+    /* =========================
+       MARCAR SOLICITUD APROBADA
+    ========================= */
     solicitud.estado = "APROBADA";
     await solicitud.save();
 
-    // ✅ estado visual definitivo
+    /* =========================
+       LIMPIEZA VISUAL (NO REAL)
+    ========================= */
     await Venta.findByIdAndUpdate(ventaId, {
-      estadoRevision: "aceptada",
+      estadoRevision: null,
     });
 
-    // 🧹 limpiar solicitudes pendientes antiguas
+    /* =========================
+       LIMPIAR OTRAS SOLICITUDES
+    ========================= */
     await Solicitud.deleteMany({
       venta: solicitud.venta,
       estado: "PENDIENTE",
       _id: { $ne: solicitud._id },
     });
 
-    // 🔔 SOCKET ÚNICO Y CORRECTO
+    /* =========================
+       SOCKET FINAL
+    ========================= */
     getIO().emit("SOLICITUD_RESUELTA", {
       ventaId,
       estado: "aceptada",
@@ -129,10 +221,6 @@ getIO().emit("VENTA_ACTUALIZADA", ventaActualizada);
     return res.status(500).json({ message: "Error aprobando solicitud" });
   }
 };
-
-
-
-
 
 /* =========================
    RECHAZAR SOLICITUD
@@ -155,47 +243,40 @@ export const rechazarSolicitud = async (req: any, res: any) => {
         ? solicitud.venta.toString()
         : solicitud.venta;
 
-    // ❌ marcar solicitud rechazada
     solicitud.estado = "RECHAZADA";
     await solicitud.save();
 
-    // 🔴 estado visual definitivo
     await Venta.findByIdAndUpdate(ventaId, {
       estadoRevision: "rechazada",
     });
 
-    // 🧹 eliminar otras pendientes
     await Solicitud.deleteMany({
       venta: solicitud.venta,
       estado: "PENDIENTE",
       _id: { $ne: solicitud._id },
     });
 
-    // 🔔 SOCKET ÚNICO (EL IMPORTANTE)
     getIO().emit("SOLICITUD_RESUELTA", {
       ventaId,
       estado: "rechazada",
     });
 
-    return res.json({ message: "Solicitud rechazada" });
+    return res.json({ message: "Solicitud rechazada correctamente" });
   } catch (error) {
     console.error("❌ ERROR RECHAZANDO SOLICITUD:", error);
     return res.status(500).json({ message: "Error rechazando solicitud" });
   }
 };
 
-
 /* =========================
-    SOLICITUDES EMPLEADO
+   CONTAR REVISIONES EMPLEADO
 ========================= */
-
 export const contarRevisionesEmpleado = async (req: any, res: Response) => {
   try {
     if (!req.user) {
       return res.status(401).json({ message: "No autenticado" });
     }
 
-    // 👤 SOLO EMPLEADO
     if (req.user.role === "admin") {
       return res.json({ count: 0 });
     }

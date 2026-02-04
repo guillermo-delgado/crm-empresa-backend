@@ -10,6 +10,8 @@ import {
   buscarVentas,
   obtenerSolicitudPendientePorVenta,
   contarRevisionesEmpleado, 
+  anularVenta,
+  solicitarRehabilitacion,
 } from "./ventas.controller";
 
 
@@ -94,6 +96,20 @@ router.delete(
 );
 
 /* =========================
+   ANULAR VENTA
+   - Admin: anula directo
+   - Empleado: crea solicitud
+   - 🔒 Requiere jornada activa
+========================= */
+router.post(
+  "/:id/anular",
+  authMiddleware,
+  requireJornadaActiva,
+  anularVenta
+);
+
+
+/* =========================
    OBTENER SOLICITUD PENDIENTE DE EDICIÓN (EMPLEADO)
 ========================= */
 router.get(
@@ -128,6 +144,16 @@ router.patch(
     const { marcarRevisionLeida } = await import("./ventas.controller");
     return marcarRevisionLeida(req, res);
   }
+);
+
+
+// SOLICITUD REHABILITAR
+
+router.post(
+  "/:id/rehabilitar",
+  authMiddleware,
+  requireJornadaActiva,
+  solicitarRehabilitacion
 );
 
 

@@ -75,6 +75,24 @@ actividad: {
       enum: ["pendiente", "aceptada", "rechazada"],
       default: null,
     },
+    estado: {
+  type: String,
+  enum: ["ACTIVA", "ANULADA"],
+  default: "ACTIVA",
+},
+
+fechaAnulacion: {
+  type: Date,
+},
+
+motivoAnulacion: {
+  type: String,
+},
+
+derivadoVerti: {
+  type: Boolean,
+  default: false,
+},
 
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
