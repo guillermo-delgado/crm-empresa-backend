@@ -447,8 +447,8 @@ export const obtenerSolicitudPendientePorVenta = async (
 
 export const buscarVentas = async (req: Request, res: Response) => {
   try {
-    if (!req.user || req.user.role !== "admin") {
-      return res.status(403).json({ message: "No autorizado" });
+    if (!req.user) {
+      return res.status(401).json({ message: "No autenticado" });
     }
 
     const { q } = req.query;
@@ -457,18 +457,46 @@ export const buscarVentas = async (req: Request, res: Response) => {
       return res.json([]);
     }
 
-    const regex = new RegExp(q.trim(), "i");
+    const texto = q.trim();
+    const regex = new RegExp(texto, "i");
 
-    const ventas = await Venta.find({
-      $or: [
-        { tomador: regex },
-        { numeroPoliza: regex },
-        { documentoFiscal: regex },
-      ],
-    })
+    // 🔍 Heurística simple: si contiene números → posible póliza
+    const parecePoliza = /\d/.test(texto);
+
+    let filtro: any;
+
+    if (req.user.role === "admin") {
+      // 👑 ADMIN → TODO
+      filtro = {
+        $or: [
+          { numeroPoliza: regex },
+          { tomador: regex },
+          { documentoFiscal: regex },
+        ],
+      };
+    } else {
+      // 👤 EMPLEADO
+      if (parecePoliza) {
+        // ✅ Puede ver ventas de otros SOLO por póliza
+        filtro = {
+          numeroPoliza: regex,
+        };
+      } else {
+        // 🔒 Resto de búsquedas → solo sus ventas
+        filtro = {
+          createdBy: req.user.id,
+          $or: [
+            { tomador: regex },
+            { documentoFiscal: regex },
+          ],
+        };
+      }
+    }
+
+    const ventas = await Venta.find(filtro)
       .sort({ fechaEfecto: -1 })
       .limit(50)
-      .populate("createdBy", "nombre");
+      .populate("createdBy", "nombre email numma");
 
     res.json(ventas);
   } catch (error) {
@@ -476,6 +504,8 @@ export const buscarVentas = async (req: Request, res: Response) => {
     res.status(500).json({ message: "Error en búsqueda de ventas" });
   }
 };
+
+
 
 /* =========================
     SOLICITUDES EMPLEADO
