@@ -26,6 +26,7 @@ export const crearVenta = async (req: Request, res: Response) => {
       actividad,
       observaciones,
       createdBy,
+      createdAt,
     } = req.body;
 
     let usuarioAsignadoId = req.user.id;
@@ -49,19 +50,25 @@ export const crearVenta = async (req: Request, res: Response) => {
       usuarioAsignadoId = usuario._id.toString();
     }
 
-    const venta = await Venta.create({
-      fechaEfecto,
-      aseguradora,
-      ramo,
-      numeroPoliza,
-      documentoFiscal,
-      tomador,
-      primaNeta: Number(primaNeta),
-      formaPago,
-      actividad,
-      observaciones,
-      createdBy: new mongoose.Types.ObjectId(usuarioAsignadoId),
-    });
+  const venta = await Venta.create({
+  fechaEfecto,
+  aseguradora,
+  ramo,
+  numeroPoliza,
+  documentoFiscal,
+  tomador,
+  primaNeta: Number(primaNeta),
+  formaPago,
+  actividad,
+  observaciones,
+  createdBy: new mongoose.Types.ObjectId(usuarioAsignadoId),
+
+  // ⛔ SOLO ADMIN puede fijar createdAt (ventas históricas)
+  ...(createdAt && req.user.role === "admin"
+    ? { createdAt: new Date(createdAt) }
+    : {}),
+});
+
 
     /* 🔔 EVENTO TIEMPO REAL */
     try {
@@ -508,7 +515,6 @@ export const buscarVentas = async (req: Request, res: Response) => {
     res.status(500).json([]);
   }
 };
-
 
 
 

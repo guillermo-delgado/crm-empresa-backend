@@ -22,6 +22,7 @@ export const validateCreateVenta = (
     primaNeta,
     formaPago,
     actividad,
+    createdAt,
   } = req.body;
 
   // 2️⃣ Campos obligatorios SOLO para crear
@@ -90,6 +91,39 @@ export const validateCreateVenta = (
       actividadesPermitidas,
     });
   }
+
+// 🕒 createdAt (solo admin y si viene)
+if (createdAt !== undefined) {
+  if (req.user?.role !== "admin") {
+    return res.status(403).json({
+      message: "No autorizado a establecer la fecha de creación",
+    });
+  }
+
+  const fechaCreacion = new Date(createdAt);
+  if (isNaN(fechaCreacion.getTime())) {
+    return res.status(400).json({
+      message: "createdAt no es una fecha válida",
+    });
+  }
+
+  const now = new Date();
+  if (fechaCreacion > now) {
+    return res.status(400).json({
+      message: "createdAt no puede ser una fecha futura",
+    });
+  }
+
+  const fechaEfectoDate = new Date(fechaEfecto);
+  if (fechaCreacion > fechaEfectoDate) {
+    return res.status(400).json({
+      message:
+        "La fecha de creación no puede ser posterior a la fecha de efecto",
+    });
+  }
+}
+
+
 
   next();
 };

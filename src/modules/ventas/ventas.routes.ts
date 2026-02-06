@@ -115,8 +115,8 @@ router.post(
 router.get(
   "/:ventaId/solicitud-pendiente",
   authMiddleware,
-  obtenerSolicitudPendientePorVenta,
   requireJornadaActiva,
+  obtenerSolicitudPendientePorVenta,
 );
 
 
@@ -127,8 +127,8 @@ router.get(
 router.get(
   "/:id",
   authMiddleware,
-  obtenerVentaPorId,
   requireJornadaActiva,
+  obtenerVentaPorId,
 );
 
 /* =========================
