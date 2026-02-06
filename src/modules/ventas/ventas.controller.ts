@@ -448,25 +448,28 @@ export const obtenerSolicitudPendientePorVenta = async (
 export const buscarVentas = async (req: Request, res: Response) => {
   try {
     if (!req.user) {
-      return res.status(401).json({ message: "No autenticado" });
+      return res.status(401).json([]);
     }
 
     const { q } = req.query;
 
-    if (!q || typeof q !== "string" || q.trim().length < 2) {
+    if (!q || typeof q !== "string") {
       return res.json([]);
     }
 
     const texto = q.trim();
-    const regex = new RegExp(texto, "i");
 
-    // 🔍 Heurística simple: si contiene números → posible póliza
-    const parecePoliza = /\d/.test(texto);
+    // 🔒 MÍNIMO GLOBAL
+    if (texto.length < 2) {
+      return res.json([]);
+    }
 
-    let filtro: any;
+    let filtro: any = null;
 
     if (req.user.role === "admin") {
-      // 👑 ADMIN → TODO
+      // 👑 ADMIN → búsqueda libre
+      const regex = new RegExp(texto, "i");
+
       filtro = {
         $or: [
           { numeroPoliza: regex },
@@ -476,21 +479,22 @@ export const buscarVentas = async (req: Request, res: Response) => {
       };
     } else {
       // 👤 EMPLEADO
-      if (parecePoliza) {
-        // ✅ Puede ver ventas de otros SOLO por póliza
-        filtro = {
-          numeroPoliza: regex,
-        };
-      } else {
-        // 🔒 Resto de búsquedas → solo sus ventas
-        filtro = {
-          createdBy: req.user.id,
-          $or: [
-            { tomador: regex },
-            { documentoFiscal: regex },
-          ],
-        };
+      // ❌ Solo números
+      if (!/^\d+$/.test(texto)) {
+        return res.json([]);
       }
+
+      // ❌ Hasta que no esté el número "completo", NO devuelve nada
+      // ⬇️ ajusta este número si tus pólizas son más largas
+      if (texto.length < 6) {
+        return res.json([]);
+      }
+
+      const regex = new RegExp(`^${texto}$`, "i");
+
+      filtro = {
+        numeroPoliza: regex,
+      };
     }
 
     const ventas = await Venta.find(filtro)
@@ -501,9 +505,10 @@ export const buscarVentas = async (req: Request, res: Response) => {
     res.json(ventas);
   } catch (error) {
     console.error("ERROR buscarVentas:", error);
-    res.status(500).json({ message: "Error en búsqueda de ventas" });
+    res.status(500).json([]);
   }
 };
+
 
 
 
