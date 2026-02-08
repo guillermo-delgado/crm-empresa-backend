@@ -12,6 +12,7 @@ import {
   contarRevisionesEmpleado, 
   anularVenta,
   solicitarRehabilitacion,
+   obtenerKPIsVentas,
 } from "./ventas.controller";
 
 
@@ -55,6 +56,19 @@ router.get(
   authMiddleware,
   requireJornadaActiva,
   libroVentas
+);
+
+/* =========================
+   KPIs COMPARATIVA AÑO ANTERIOR
+   - Admin: global o por usuario
+   - Empleado: solo sus datos
+   - 🔒 Requiere jornada activa
+========================= */
+router.get(
+  "/kpis",
+  authMiddleware,
+  requireJornadaActiva,
+  obtenerKPIsVentas
 );
 
 /* =========================

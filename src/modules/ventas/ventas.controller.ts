@@ -144,6 +144,109 @@ export const libroVentas = async (req: Request, res: Response) => {
 };
 
 /* =========================
+   KPIs COMPARATIVA AÑO ANTERIOR
+========================= */
+export const obtenerKPIsVentas = async (req: Request, res: Response) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ message: "No autenticado" });
+    }
+
+    const user = req.user; // ✅ SE MANTIENE
+
+    const mes = Number(req.query.mes);
+    const anio = Number(req.query.anio);
+    const aseguradora = req.query.aseguradora as string;
+    const ramo = req.query.ramo as string;
+    const usuario = req.query.usuario as string;
+
+    if (!mes || !anio) {
+      return res.status(400).json({ message: "Mes y año obligatorios" });
+    }
+
+    // 📅 RANGOS
+    const startActual = new Date(anio, mes - 1, 1);
+    const endActual = new Date(anio, mes, 0, 23, 59, 59);
+
+    const startPrevio = new Date(anio - 1, mes - 1, 1);
+    const endPrevio = new Date(anio - 1, mes, 0, 23, 59, 59);
+
+    const baseFiltro = (start: Date, end: Date) => {
+      const f: any = {
+        fechaEfecto: { $gte: start, $lte: end },
+      };
+
+      // 👤 EMPLEADO → SOLO SUS VENTAS
+      if (user.role !== "admin") {
+        f.createdBy = user.id;
+      }
+
+      if (aseguradora && aseguradora !== "ALL") {
+        f.aseguradora = aseguradora;
+      }
+
+      if (ramo && ramo !== "ALL") {
+        f.ramo = ramo;
+      }
+
+      // 👑 ADMIN → filtrar por usuario SOLO si es ObjectId válido
+      if (
+        user.role === "admin" &&
+        usuario &&
+        usuario !== "ALL" &&
+        mongoose.Types.ObjectId.isValid(usuario)
+      ) {
+        f.createdBy = new mongoose.Types.ObjectId(usuario);
+      }
+
+      return f;
+    };
+
+    const ventasActual = await Venta.find(
+      baseFiltro(startActual, endActual)
+    );
+
+    const ventasPrevio = await Venta.find(
+      baseFiltro(startPrevio, endPrevio)
+    );
+
+    const produccionActual = ventasActual.reduce(
+      (acc, v) => acc + v.primaNeta,
+      0
+    );
+
+    const produccionPrevio = ventasPrevio.reduce(
+      (acc, v) => acc + v.primaNeta,
+      0
+    );
+
+    const variacionPct =
+      produccionPrevio === 0
+        ? null
+        : ((produccionActual - produccionPrevio) / produccionPrevio) * 100;
+
+    const deltaPolizas = ventasActual.length - ventasPrevio.length;
+
+    return res.json({
+      produccion: {
+        actual: produccionActual,
+        previo: produccionPrevio,
+        variacionPct,
+      },
+      polizas: {
+        delta: deltaPolizas,
+      },
+    });
+  } catch (error) {
+    console.error("ERROR KPIs VENTAS:", error);
+    return res.status(500).json({ message: "Error obteniendo KPIs" });
+  }
+};
+
+
+
+
+/* =========================
    EDITAR VENTA
 ========================= */
 export const editarVenta = async (req: Request, res: Response) => {
