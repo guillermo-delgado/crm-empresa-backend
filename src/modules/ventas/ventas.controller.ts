@@ -94,6 +94,11 @@ export const libroVentas = async (req: Request, res: Response) => {
     const month = Number(req.query.month);
     const year = Number(req.query.year);
 
+    const diaHasta = req.query.diaHasta
+  ? Number(req.query.diaHasta)
+  : null;
+
+
     if (!month || !year) {
       return res.status(400).json({ message: "Mes y año obligatorios" });
     }
@@ -112,7 +117,20 @@ export const libroVentas = async (req: Request, res: Response) => {
     }
 
     const start = new Date(year, month - 1, 1);
-    const end = new Date(year, month, 0, 23, 59, 59);
+
+const lastDayOfMonth = new Date(year, month, 0).getDate();
+
+const end = new Date(
+  year,
+  month - 1,
+  diaHasta && diaHasta <= lastDayOfMonth
+    ? diaHasta
+    : lastDayOfMonth,
+  23,
+  59,
+  59
+);
+
 
     const filtro: any = {
       fechaEfecto: { $gte: start, $lte: end },
@@ -159,17 +177,46 @@ export const obtenerKPIsVentas = async (req: Request, res: Response) => {
     const aseguradora = req.query.aseguradora as string;
     const ramo = req.query.ramo as string;
     const usuario = req.query.usuario as string;
+    const diaHasta = req.query.diaHasta
+  ? Number(req.query.diaHasta)
+  : null;
+
 
     if (!mes || !anio) {
       return res.status(400).json({ message: "Mes y año obligatorios" });
     }
 
     // 📅 RANGOS
-    const startActual = new Date(anio, mes - 1, 1);
-    const endActual = new Date(anio, mes, 0, 23, 59, 59);
+    // 📅 RANGOS
+const startActual = new Date(anio, mes - 1, 1);
 
-    const startPrevio = new Date(anio - 1, mes - 1, 1);
-    const endPrevio = new Date(anio - 1, mes, 0, 23, 59, 59);
+const lastDayOfMonth = new Date(anio, mes, 0).getDate();
+
+const endActual = new Date(
+  anio,
+  mes - 1,
+  diaHasta && diaHasta <= lastDayOfMonth
+    ? diaHasta
+    : lastDayOfMonth,
+  23,
+  59,
+  59
+);
+
+const startPrevio = new Date(anio - 1, mes - 1, 1);
+
+const lastDayPrevYear = new Date(anio - 1, mes, 0).getDate();
+
+const endPrevio = new Date(
+  anio - 1,
+  mes - 1,
+  diaHasta && diaHasta <= lastDayPrevYear
+    ? diaHasta
+    : lastDayPrevYear,
+  23,
+  59,
+  59
+);
 
     const baseFiltro = (start: Date, end: Date) => {
       const f: any = {
@@ -210,6 +257,68 @@ export const obtenerKPIsVentas = async (req: Request, res: Response) => {
       baseFiltro(startPrevio, endPrevio)
     );
 
+    // ===============================
+// 📊 KPI POR CREATED AT
+// ===============================
+
+const baseFiltroCreated = (start: Date, end: Date) => {
+  const f: any = {
+    createdAt: { $gte: start, $lte: end },
+  };
+
+  if (user.role !== "admin") {
+    f.createdBy = user.id;
+  }
+
+  if (aseguradora && aseguradora !== "ALL") {
+    f.aseguradora = aseguradora;
+  }
+
+  if (ramo && ramo !== "ALL") {
+    f.ramo = ramo;
+  }
+
+  if (
+    usuario &&
+    usuario !== "ALL" &&
+    user.role === "admin" &&
+    mongoose.Types.ObjectId.isValid(usuario)
+  ) {
+    f.createdBy = new mongoose.Types.ObjectId(usuario);
+  }
+
+  return f;
+};
+
+const ventasActualCreated = await Venta.find(
+  baseFiltroCreated(startActual, endActual)
+);
+
+const ventasPrevioCreated = await Venta.find(
+  baseFiltroCreated(startPrevio, endPrevio)
+);
+
+const produccionActualCreated = ventasActualCreated.reduce(
+  (acc, v) => acc + v.primaNeta,
+  0
+);
+
+const produccionPrevioCreated = ventasPrevioCreated.reduce(
+  (acc, v) => acc + v.primaNeta,
+  0
+);
+
+const variacionPctCreated =
+  produccionPrevioCreated === 0
+    ? null
+    : ((produccionActualCreated - produccionPrevioCreated) /
+        produccionPrevioCreated) *
+      100;
+
+const deltaPolizasCreated =
+  ventasActualCreated.length - ventasPrevioCreated.length;
+
+
     const produccionActual = ventasActual.reduce(
       (acc, v) => acc + v.primaNeta,
       0
@@ -227,16 +336,32 @@ export const obtenerKPIsVentas = async (req: Request, res: Response) => {
 
     const deltaPolizas = ventasActual.length - ventasPrevio.length;
 
-    return res.json({
-      produccion: {
-        actual: produccionActual,
-        previo: produccionPrevio,
-        variacionPct,
-      },
-      polizas: {
-        delta: deltaPolizas,
-      },
-    });
+   return res.json({
+  // ==============================
+  // 📊 KPI POR FECHA EFECTO
+  // ==============================
+  produccion: {
+    actual: produccionActual,
+    previo: produccionPrevio,
+    variacionPct,
+  },
+  polizas: {
+    delta: deltaPolizas,
+  },
+
+  // ==============================
+  // 📊 KPI POR CREATED AT (MES COMERCIAL REAL)
+  // ==============================
+  produccionCreated: {
+    actual: produccionActualCreated,
+    previo: produccionPrevioCreated,
+    variacionPct: variacionPctCreated,
+  },
+  polizasCreated: {
+    delta: deltaPolizasCreated,
+  },
+});
+
   } catch (error) {
     console.error("ERROR KPIs VENTAS:", error);
     return res.status(500).json({ message: "Error obteniendo KPIs" });
@@ -723,7 +848,7 @@ export const anularVenta = async (req: Request, res: Response) => {
     } catch {}
 
     // ⚠️ 403 ES CORRECTO → el frontend lo trata como OK
-    return res.status(292).json({
+    return res.status(202).json({
       message: "Solicitud de anulación enviada al administrador",
     });
 
