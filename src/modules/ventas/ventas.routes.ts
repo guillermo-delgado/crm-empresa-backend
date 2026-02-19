@@ -9,13 +9,13 @@ import {
   obtenerVentaPorId,
   buscarVentas,
   obtenerSolicitudPendientePorVenta,
-  contarRevisionesEmpleado, 
+  contarRevisionesEmpleado,
   anularVenta,
   solicitarRehabilitacion,
-   obtenerKPIsVentas,
+  obtenerKPIsVentas,
+  obtenerPolizasComparativa3Anios,
+  obtenerVentaAdelantada, // 🔥 NUEVO CONTROLADOR
 } from "./ventas.controller";
-
-
 
 import { authMiddleware } from "../../middlewares/auth";
 import {
@@ -36,8 +36,6 @@ router.get(
 
 /* =========================
    CREAR VENTA
-   - Empleado y Admin
-   - 🔒 Requiere jornada activa
 ========================= */
 router.post(
   "/",
@@ -49,7 +47,6 @@ router.post(
 
 /* =========================
    LIBRO DE VENTAS
-   - Autenticado
 ========================= */
 router.get(
   "/libro",
@@ -60,9 +57,6 @@ router.get(
 
 /* =========================
    KPIs COMPARATIVA AÑO ANTERIOR
-   - Admin: global o por usuario
-   - Empleado: solo sus datos
-   - 🔒 Requiere jornada activa
 ========================= */
 router.get(
   "/kpis",
@@ -72,21 +66,38 @@ router.get(
 );
 
 /* =========================
-   BUSCADOR
-   - PÓLIZA
-   - NIF, NIE, CIF
-   - NOMBRE
+   DASHBOARD · POLIZAS 3 AÑOS
 ========================= */
+router.get(
+  "/dashboard/polizas-3-anios",
+  authMiddleware,
+  requireJornadaActiva,
+  obtenerPolizasComparativa3Anios
+);
 
-router.get("/buscar", authMiddleware, buscarVentas);
+/* =========================
+   🔥 DASHBOARD · VENTA ADELANTADA REAL
+   - Filtra por createdAt del mes
+   - fechaEfecto posterior
+========================= */
+router.get(
+  "/dashboard/venta-adelantada",
+  authMiddleware,
+  requireJornadaActiva,
+  obtenerVentaAdelantada
+);
 
-
+/* =========================
+   BUSCADOR
+========================= */
+router.get(
+  "/buscar",
+  authMiddleware,
+  buscarVentas
+);
 
 /* =========================
    EDITAR VENTA
-   - Admin: edita directo
-   - Empleado: crea solicitud
-   - 🔒 Requiere jornada activa
 ========================= */
 router.put(
   "/:id",
@@ -98,9 +109,6 @@ router.put(
 
 /* =========================
    ELIMINAR VENTA
-   - Admin: elimina directo
-   - Empleado: crea solicitud
-   - 🔒 Requiere jornada activa
 ========================= */
 router.delete(
   "/:id",
@@ -111,9 +119,6 @@ router.delete(
 
 /* =========================
    ANULAR VENTA
-   - Admin: anula directo
-   - Empleado: crea solicitud
-   - 🔒 Requiere jornada activa
 ========================= */
 router.post(
   "/:id/anular",
@@ -122,33 +127,28 @@ router.post(
   anularVenta
 );
 
-
 /* =========================
-   OBTENER SOLICITUD PENDIENTE DE EDICIÓN (EMPLEADO)
+   OBTENER SOLICITUD PENDIENTE
 ========================= */
 router.get(
   "/:ventaId/solicitud-pendiente",
   authMiddleware,
   requireJornadaActiva,
-  obtenerSolicitudPendientePorVenta,
+  obtenerSolicitudPendientePorVenta
 );
-
 
 /* =========================
    OBTENER VENTA POR ID
-   - Autenticado
 ========================= */
 router.get(
   "/:id",
   authMiddleware,
   requireJornadaActiva,
-  obtenerVentaPorId,
+  obtenerVentaPorId
 );
 
 /* =========================
    MARCAR REVISIÓN COMO LEÍDA
-   - Empleado propietario
-   - 🔒 Requiere jornada activa
 ========================= */
 router.patch(
   "/:id/marcar-revision-leida",
@@ -160,16 +160,14 @@ router.patch(
   }
 );
 
-
-// SOLICITUD REHABILITAR
-
+/* =========================
+   SOLICITUD REHABILITAR
+========================= */
 router.post(
   "/:id/rehabilitar",
   authMiddleware,
   requireJornadaActiva,
   solicitarRehabilitacion
 );
-
-
 
 export default router;

@@ -932,3 +932,147 @@ export const solicitarRehabilitacion = async (req: Request, res: Response) => {
   }
 };
 
+export const obtenerPolizasComparativa3Anios = async (req: Request, res: Response) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ message: "No autenticado" });
+    }
+
+    const aseguradora = req.query.aseguradora as string;
+    const usuario = req.query.usuario as string;
+    const ramo = req.query.ramo as string;
+    const tipo = (req.query.tipo as string) || "polizas";
+    // polizas | primaEfecto | primaCreated
+
+    const now = new Date();
+    const anioActual = now.getFullYear();
+    const anios = [anioActual, anioActual - 1, anioActual - 2];
+
+    const matchBase: any = {};
+
+    // 🔐 EMPLEADO → solo sus ventas
+    if (req.user.role !== "admin") {
+      matchBase.createdBy = new mongoose.Types.ObjectId(req.user.id);
+    }
+
+    // 🏢 ASEGURADORA
+    if (aseguradora && aseguradora !== "ALL") {
+      matchBase.aseguradora = aseguradora;
+    }
+
+    // 🌿 RAMO
+    if (ramo && ramo !== "ALL") {
+      matchBase.ramo = ramo;
+    }
+
+    // 👑 ADMIN → filtrar por usuario
+    if (
+      req.user.role === "admin" &&
+      usuario &&
+      usuario !== "ALL" &&
+      mongoose.Types.ObjectId.isValid(usuario)
+    ) {
+      matchBase.createdBy = new mongoose.Types.ObjectId(usuario);
+    }
+
+    const resultados: any = {};
+
+    for (const anio of anios) {
+      const start = new Date(anio, 0, 1);
+      const end = new Date(anio, 11, 31, 23, 59, 59);
+
+      const campoFecha =
+        tipo === "primaCreated" ? "createdAt" : "fechaEfecto";
+
+      const acumulador =
+        tipo === "polizas"
+          ? { $sum: 1 }
+          : { $sum: "$primaNeta" };
+
+      const data = await Venta.aggregate([
+        {
+          $match: {
+            ...matchBase,
+            [campoFecha]: { $gte: start, $lte: end },
+          },
+        },
+        {
+          $group: {
+            _id: { $month: `$${campoFecha}` },
+            total: acumulador,
+          },
+        },
+      ]);
+
+      const meses = Array(12).fill(0);
+
+      data.forEach((item) => {
+        meses[item._id - 1] = item.total;
+      });
+
+      resultados[anio] = meses;
+    }
+
+    return res.json(resultados);
+
+  } catch (error) {
+    console.error("ERROR COMPARATIVA 3 AÑOS:", error);
+    return res.status(500).json({ message: "Error obteniendo comparativa" });
+  }
+};
+
+
+export const obtenerVentaAdelantada = async (req: Request, res: Response) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ message: "No autenticado" });
+    }
+
+    const anio = Number(req.query.anio);
+    const mes = Number(req.query.mes); // 1-12
+
+    if (!anio || !mes) {
+      return res.status(400).json({ message: "Año y mes obligatorios" });
+    }
+
+    const startCreated = new Date(anio, mes - 1, 1);
+    const endCreated = new Date(anio, mes, 0, 23, 59, 59);
+
+    const filtro: any = {
+      createdAt: { $gte: startCreated, $lte: endCreated },
+    };
+
+    if (req.user.role !== "admin") {
+      filtro.createdBy = req.user.id;
+    }
+
+    const ventas = await Venta.find(filtro);
+
+    let total = 0;
+
+    ventas.forEach((venta) => {
+      const created = new Date(venta.createdAt);
+      const efecto = new Date(venta.fechaEfecto);
+
+      const esAdelantada =
+        efecto.getFullYear() > created.getFullYear() ||
+        (efecto.getFullYear() === created.getFullYear() &&
+          efecto.getMonth() > created.getMonth());
+
+      if (esAdelantada) {
+        total += venta.primaNeta;
+      }
+    });
+
+    return res.json({ total });
+
+  } catch (error) {
+    console.error("ERROR venta adelantada:", error);
+    return res.status(500).json({ message: "Error obteniendo venta adelantada" });
+  }
+};
+
+
+
+
+
