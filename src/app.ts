@@ -14,7 +14,7 @@ import horarioCrmRoutes from "./modules/horario/horario.crm.routes";
 import fichajesCrmRoutes from "./modules/horario/fichajes.crm.routes";
 
 // 🤖 AI CONTABLE
-import { aiRoutes } from "./modules/ai/ai.routes";
+//import { aiRoutes } from "./modules/ai/ai.routes";
 
 // 🧾 FACTURAS (INTERCEPTOR GENERAL)
 import facturasRoutes from "./modules/facturas/facturas.routes";
@@ -63,7 +63,7 @@ app.use("/api/crm/horario", horarioCrmRoutes);
 app.use("/api/crm/fichajes", fichajesCrmRoutes);
 
 // 🤖 AI CONTABLE (PROTEGIDO)
-app.use("/api/crm/ai", aiRoutes);
+//app.use("/api/crm/ai", aiRoutes);
 
 // 🧾 FACTURAS (PROCESADOR CENTRAL CON DETECTOR)
 app.use("/api/crm/facturas", facturasRoutes);
