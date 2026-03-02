@@ -1,13 +1,22 @@
 import OpenAI from "openai";
 import { DocumentoContable } from "./ai.types";
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
-
 export async function analyzeDocumentWithAI(
   structuredText: string
 ): Promise<DocumentoContable> {
+
+  // 🔎 Validación explícita de entorno
+  if (!process.env.OPENAI_API_KEY) {
+    console.error("❌ OPENAI_API_KEY no definida en entorno");
+    throw new Error("OPENAI_API_KEY no está configurada");
+  }
+
+  console.log("✅ OPENAI_API_KEY detectada");
+
+  // ✅ Crear cliente dentro de la función (evita crash en carga de módulo)
+  const openai = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY,
+  });
 
   const response = await openai.chat.completions.create({
     model: "gpt-4o",
@@ -91,7 +100,7 @@ IMPORTANTE:
     ]
   });
 
-  const content = response.choices[0].message.content;
+  const content = response.choices[0]?.message?.content;
 
   if (!content) {
     throw new Error("Respuesta vacía de la IA");
@@ -99,8 +108,8 @@ IMPORTANTE:
 
   try {
     return JSON.parse(content);
-  } catch (err) {
-    console.error("JSON inválido IA:", content);
+  } catch {
+    console.error("❌ JSON inválido devuelto por IA:", content);
     throw new Error("La IA no devolvió JSON válido");
   }
 }
