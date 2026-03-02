@@ -12,7 +12,7 @@ import { procesarMapfreEspanaService }
 import { generarHash } from "../../utils/hashFile";
 import FacturacionModel from "./mapfreVida/mapfreVida.model";
 import { generarUrlFirmada } from "../../services/generarUrlFirmada";
-import { extraerTextoConOCR } from "../../utils/ocr";
+// import { extraerTextoConOCR } from "../../utils/ocr";
 
 /* =====================================================
    PROCESAR FACTURA (INTERCEPTOR CENTRAL)
@@ -87,7 +87,7 @@ if (!text || text.trim().length < 80) {
 
   console.log("⚠️ Texto insuficiente. Activando OCR...");
 
-  text = await extraerTextoConOCR(req.file.buffer);
+//   text = await extraerTextoConOCR(req.file.buffer);
   usadoOCR = true;
 
   console.log("====================================");
