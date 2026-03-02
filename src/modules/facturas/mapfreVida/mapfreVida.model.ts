@@ -200,11 +200,10 @@ FacturacionSchema.index({
    EXPORT
 ===================================================== */
 
-export const FacturacionModel: Model<IFacturacion> =
-  mongoose.model<IFacturacion>(
-    "Facturacion",
-    FacturacionSchema,
-    "facturacion"
-  );
+const FacturacionModel = mongoose.model<IFacturacion>(
+  "Facturacion",
+  FacturacionSchema,
+  "facturacion"
+);
 
 export default FacturacionModel;

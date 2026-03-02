@@ -26,6 +26,8 @@ export function calcularMapfreVida(
 } {
   let abonos = 0;
   let extornos = 0;
+  let compensaciones = 0;
+  let otrosGastos = 0;
 
   rows.forEach((row) => {
     const comision = row.comision;
@@ -37,7 +39,9 @@ export function calcularMapfreVida(
 
   const base = abonos - extornos;
   const irpf = Number((base * 0.15).toFixed(2));
-  const liquidoCalculado = Number((base - irpf).toFixed(2));
+  const liquidoCalculado = Number(
+    (base - irpf - compensaciones).toFixed(2)
+  );
 
   let liquidoFinal = liquidoCalculado;
   let diferencia = 0;
@@ -59,8 +63,8 @@ export function calcularMapfreVida(
     extornos: Number(extornos.toFixed(2)),
     base: Number(base.toFixed(2)),
     irpf,
-    compensaciones: 0,
-    otrosGastos: 0,
+    compensaciones: Number(compensaciones.toFixed(2)),
+    otrosGastos: Number(otrosGastos.toFixed(2)),
     liquido: Number(liquidoFinal.toFixed(2)),
     liquidoCalculado,
     diferencia,
@@ -101,7 +105,10 @@ export const procesarMapfreVidaService = async (
     const rows = parseMapfreVidaFromText(cleanText);
     const liquidoOficial = extraerLiquidoOficial(cleanText);
 
-    const resultado = calcularMapfreVida(rows, liquidoOficial);
+    const resultado = calcularMapfreVida(
+      rows,
+      liquidoOficial
+    );
 
     const {
       totalNuevaProduccion,
@@ -109,98 +116,7 @@ export const procesarMapfreVidaService = async (
     } = calcularTotalesProduccion(rows);
 
     /* =====================================================
-       VALIDACIONES
-    ===================================================== */
-
-    let sePuedeGuardar = true;
-
-    if (
-      typeof liquidoOficial === "number" &&
-      Math.abs(resultado.diferencia) > 0.02
-    ) {
-      sePuedeGuardar = false;
-      addLog("❌ ERROR DE CUADRE: diferencia > 0.02 €");
-    }
-
-    if (!datosFactura.numeroFactura?.trim()) {
-      sePuedeGuardar = false;
-      addLog("❌ Falta número de factura");
-    }
-
-    if (!datosFactura.periodo?.trim()) {
-      sePuedeGuardar = false;
-      addLog("❌ Falta periodo");
-    }
-
-    if (!datosFactura.razonSocial?.trim()) {
-      sePuedeGuardar = false;
-      addLog("❌ Falta razón social");
-    }
-
-    if (!datosFactura.cif?.trim()) {
-      sePuedeGuardar = false;
-      addLog("❌ Falta CIF");
-    }
-
-    /* =====================================================
-       BLOQUEO POR HASH
-    ===================================================== */
-
-    if (hash) {
-      const existeHash = await FacturacionModel.findOne({
-        usuarioId,
-        "archivo.hash": hash,
-      });
-
-      if (existeHash) {
-        addLog("⚠ Archivo duplicado (hash)");
-        return res.json({
-          resumen: {
-            ...resultado,
-            nuevaProduccion: totalNuevaProduccion,
-            renovaciones: totalRenovaciones,
-          },
-          datosFactura,
-          logs,
-          sePuedeGuardar: false,
-        });
-      }
-    }
-
-    /* =====================================================
-       BLOQUEO POR NÚMERO FACTURA
-    ===================================================== */
-
-    const existeFactura = await FacturacionModel.findOne({
-      usuarioId,
-      "factura.numero": datosFactura.numeroFactura,
-      tipo: "MAPFRE_VIDA",
-    });
-
-    if (existeFactura) {
-      addLog("⚠ Esta factura ya existe");
-      sePuedeGuardar = false;
-    }
-
-    /* =====================================================
-       SI NO SE PUEDE GUARDAR → SALIR
-    ===================================================== */
-
-    if (!sePuedeGuardar) {
-      return res.json({
-        resumen: {
-          ...resultado,
-          nuevaProduccion: totalNuevaProduccion,
-          renovaciones: totalRenovaciones,
-        },
-        datosFactura,
-        logs,
-        sePuedeGuardar,
-      });
-    }
-
-    /* =====================================================
-       SUBIR A S3
+       ORGANIZAR CARPETAS S3 (AÑO / MES)
     ===================================================== */
 
     const periodo = datosFactura.periodo || "SIN_PERIODO";
@@ -217,6 +133,7 @@ export const procesarMapfreVidaService = async (
     }
 
     const folderPath = `${anio}/${mes}`;
+
     const nombreArchivo = `MapfreVida-${mes}-${anio}-${datosFactura.numeroFactura}.pdf`;
 
     const s3Result = await uploadToS3(
@@ -226,7 +143,7 @@ export const procesarMapfreVidaService = async (
       folderPath
     );
 
-    addLog(`Archivo subido a S3: ${s3Result.key}`);
+    console.log("Archivo subido a S3:", s3Result.key);
 
     /* =====================================================
        GUARDAR EN MONGO
@@ -235,7 +152,6 @@ export const procesarMapfreVidaService = async (
     await FacturacionModel.create({
       usuarioId,
       tipo: "MAPFRE_VIDA",
-
       factura: {
         numero: datosFactura.numeroFactura,
         fecha: datosFactura.fecha,
@@ -243,7 +159,6 @@ export const procesarMapfreVidaService = async (
         razonSocial: datosFactura.razonSocial,
         cif: datosFactura.cif,
       },
-
       resumen: {
         abonos: resultado.abonos,
         extornos: resultado.extornos,
@@ -258,22 +173,30 @@ export const procesarMapfreVidaService = async (
         nuevaProduccion: totalNuevaProduccion,
         renovaciones: totalRenovaciones,
       },
-
       lineas: rows,
-
       archivo: {
         nombreOriginal: req.file?.originalname,
         hash,
         size: req.file?.size,
         s3Key: s3Result.key,
       },
-
-      logs,
-      sePuedeGuardar,
-      usandoLiquidoOficial: resultado.usandoLiquidoOficial,
     });
 
-    addLog("✅ Factura guardada correctamente");
+    /* =====================================================
+       LOGS
+    ===================================================== */
+
+    addLog(`Número factura: ${datosFactura.numeroFactura}`);
+    addLog(`Periodo: ${datosFactura.periodo}`);
+    addLog(`Archivo guardado en S3: ${s3Result.key}`);
+    addLog(`Filas detectadas: ${rows.length}`);
+    addLog(`Abonos: ${resultado.abonos.toFixed(2)} €`);
+    addLog(`Extornos: ${resultado.extornos.toFixed(2)} €`);
+    addLog(`Base: ${resultado.base.toFixed(2)} €`);
+    addLog(`IRPF: ${resultado.irpf.toFixed(2)} €`);
+    addLog(`Nueva Producción: ${totalNuevaProduccion.toFixed(2)} €`);
+    addLog(`Renovaciones: ${totalRenovaciones.toFixed(2)} €`);
+    addLog(`Líquido final: ${resultado.liquido.toFixed(2)} €`);
 
     return res.json({
       resumen: {
@@ -283,11 +206,10 @@ export const procesarMapfreVidaService = async (
       },
       datosFactura,
       logs,
-      sePuedeGuardar,
     });
 
   } catch (error) {
-    console.error("🔥 ERROR MAPFRE VIDA:", error);
+    console.error("🔥 ERROR REAL SERVICE:", error);
     return res.status(500).json({
       error: "Error procesando MAPFRE VIDA",
     });
