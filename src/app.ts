@@ -13,6 +13,11 @@ import horarioRoutes from "./modules/horario/horario.routes";
 import horarioCrmRoutes from "./modules/horario/horario.crm.routes";
 import fichajesCrmRoutes from "./modules/horario/fichajes.crm.routes";
 
+// 🤖 AI CONTABLE
+import { aiRoutes } from "./modules/ai/ai.routes";
+
+// 🧾 FACTURAS (INTERCEPTOR GENERAL)
+import facturasRoutes from "./modules/facturas/facturas.routes";
 
 const app = express();
 
@@ -27,7 +32,6 @@ const allowedOrigins = [
 app.use(
   cors({
     origin: (origin, callback) => {
-      // permitir llamadas internas (Postman, server-to-server, etc.)
       if (!origin) return callback(null, true);
 
       if (allowedOrigins.includes(origin)) {
@@ -45,6 +49,7 @@ app.use(express.json());
 /* =========================
    ROUTES
 ========================= */
+
 app.use("/api/auth", authRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/ventas", ventasRoutes);
@@ -57,5 +62,10 @@ app.use("/api/horario", horarioRoutes);
 app.use("/api/crm/horario", horarioCrmRoutes);
 app.use("/api/crm/fichajes", fichajesCrmRoutes);
 
+// 🤖 AI CONTABLE (PROTEGIDO)
+app.use("/api/crm/ai", aiRoutes);
+
+// 🧾 FACTURAS (PROCESADOR CENTRAL CON DETECTOR)
+app.use("/api/crm/facturas", facturasRoutes);
 
 export default app;
