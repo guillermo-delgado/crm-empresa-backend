@@ -656,12 +656,16 @@ if (hash) {
       addLog("✅ Factura guardada correctamente en base de datos");
     }
 
-  } catch (error) {
+  } catch (error: any) {
 
-    console.error("Error guardando factura:", error);
-    addLog("❌ Error guardando la factura en base de datos");
+  console.error("🔥 ERROR REAL MONGO:", error);
 
+  if (error.code === 11000) {
+    addLog("❌ Error Mongo: clave duplicada (E11000)");
+  } else {
+    addLog("❌ Error guardando en Mongo: " + error.message);
   }
+}
 
 } else {
 
