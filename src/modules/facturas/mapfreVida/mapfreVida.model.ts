@@ -1,37 +1,131 @@
-import mongoose, { Schema, Document, Model } from "mongoose";
+import mongoose, {
+  Schema,
+  Model,
+  HydratedDocument,
+  Types,
+} from "mongoose";
 
-export interface IFacturacion extends Document {
-  usuarioId: mongoose.Types.ObjectId;
-  tipo: string;
-  factura: {
-    numero?: string;
-    fecha?: string;
-    periodo?: string;
-    razonSocial?: string;
-    cif?: string;
-  };
-  resumen: {
-    abonos: number;
-    extornos: number;
-    base: number;
-    irpf: number;
-    compensaciones: number;
-    otrosGastos: number;
-    liquidoCalculado: number;
-    liquidoOficial?: number | null;
-    liquidoFinal: number;
-    diferencia: number;
-    nuevaProduccion?: number;
-    renovaciones?: number;
-  };
-  lineas: any[];
-  archivo: {
-    nombreOriginal?: string;
-    hash?: string;
-    size?: number;
-    s3Key?: string;
-  };
+/* =====================================================
+   TYPES
+===================================================== */
+
+export interface IFactura {
+  numero?: string;
+  fecha?: string;
+  periodo?: string;
+  razonSocial?: string;
+  cif?: string;
 }
+
+export interface IResumen {
+  abonos: number;
+  extornos: number;
+  base: number;
+  irpf: number;
+  compensaciones: number;
+  otrosGastos: number;
+
+  incentivos?: number;
+  rappeles?: number;
+  otrasContraprestaciones?: number;
+  traspaso?: number;
+  comisionesNoSeguro?: number;
+  operacionesBancarias?: number;
+  ivaOperaciones?: number;
+  lineasDelegadas?: number;
+
+  liquidoCalculado: number;
+  liquidoOficial?: number | null;
+  liquidoFinal: number;
+  diferencia: number;
+
+  nuevaProduccion?: number;
+  renovaciones?: number;
+}
+
+export interface IArchivo {
+  nombreOriginal?: string;
+  hash?: string;
+  size?: number;
+  s3Key?: string;
+}
+
+export interface IFacturacion {
+  usuarioId: Types.ObjectId;
+  tipo: string;
+
+  factura: IFactura;
+  resumen: IResumen;
+
+  lineas: unknown[];
+
+  archivo: IArchivo;
+
+  logs?: string[];
+
+  sePuedeGuardar: boolean;
+  usandoLiquidoOficial?: boolean;
+}
+
+export type FacturacionDocument = HydratedDocument<IFacturacion>;
+
+/* =====================================================
+   SUBSCHEMAS
+===================================================== */
+
+const FacturaSchema = new Schema<IFactura>(
+  {
+    numero: { type: String, index: true },
+    fecha: String,
+    periodo: { type: String, index: true },
+    razonSocial: String,
+    cif: String,
+  },
+  { _id: false }
+);
+
+const ResumenSchema = new Schema<IResumen>(
+  {
+    abonos: { type: Number, default: 0 },
+    extornos: { type: Number, default: 0 },
+    base: { type: Number, default: 0 },
+    irpf: { type: Number, default: 0 },
+    compensaciones: { type: Number, default: 0 },
+    otrosGastos: { type: Number, default: 0 },
+
+    incentivos: { type: Number, default: 0 },
+    rappeles: { type: Number, default: 0 },
+    otrasContraprestaciones: { type: Number, default: 0 },
+    traspaso: { type: Number, default: 0 },
+    comisionesNoSeguro: { type: Number, default: 0 },
+    operacionesBancarias: { type: Number, default: 0 },
+    ivaOperaciones: { type: Number, default: 0 },
+    lineasDelegadas: { type: Number, default: 0 },
+
+    liquidoCalculado: { type: Number, default: 0 },
+    liquidoOficial: { type: Number, default: null },
+    liquidoFinal: { type: Number, default: 0 },
+    diferencia: { type: Number, default: 0 },
+
+    nuevaProduccion: { type: Number, default: 0 },
+    renovaciones: { type: Number, default: 0 },
+  },
+  { _id: false }
+);
+
+const ArchivoSchema = new Schema<IArchivo>(
+  {
+    nombreOriginal: String,
+    hash: { type: String, index: true },
+    size: Number,
+    s3Key: String,
+  },
+  { _id: false }
+);
+
+/* =====================================================
+   MAIN SCHEMA
+===================================================== */
 
 const FacturacionSchema = new Schema<IFacturacion>(
   {
@@ -39,49 +133,74 @@ const FacturacionSchema = new Schema<IFacturacion>(
       type: Schema.Types.ObjectId,
       required: true,
       ref: "User",
+      index: true,
     },
 
     tipo: {
       type: String,
       required: true,
+      index: true,
     },
 
     factura: {
-      numero: String,
-      fecha: String,
-      periodo: String,
-      razonSocial: String,
-      cif: String,
+      type: FacturaSchema,
+      required: true,
     },
 
     resumen: {
-      abonos: Number,
-      extornos: Number,
-      base: Number,
-      irpf: Number,
-      compensaciones: Number,
-      otrosGastos: Number,
-      liquidoCalculado: Number,
-      liquidoOficial: Number,
-      liquidoFinal: Number,
-      diferencia: Number,
-      nuevaProduccion: Number,
-      renovaciones: Number,
+      type: ResumenSchema,
+      required: true,
     },
 
-    lineas: Array,
+    lineas: {
+      type: [Schema.Types.Mixed],
+      default: [],
+    },
 
     archivo: {
-      nombreOriginal: String,
-      hash: String,
-      size: Number,
-      s3Key: String,
+      type: ArchivoSchema,
+      required: true,
+    },
+
+    logs: {
+      type: [String],
+      default: [],
+    },
+
+    sePuedeGuardar: {
+      type: Boolean,
+      default: true,
+    },
+
+    usandoLiquidoOficial: {
+      type: Boolean,
+      default: false,
     },
   },
   { timestamps: true }
 );
 
-const FacturacionModel: Model<IFacturacion> =
+/* =====================================================
+   ÍNDICES
+===================================================== */
+
+FacturacionSchema.index({
+  usuarioId: 1,
+  "factura.numero": 1,
+  tipo: 1,
+});
+
+FacturacionSchema.index({
+  usuarioId: 1,
+  "factura.periodo": 1,
+  tipo: 1,
+});
+
+/* =====================================================
+   EXPORT
+===================================================== */
+
+export const FacturacionModel: Model<IFacturacion> =
   mongoose.model<IFacturacion>(
     "Facturacion",
     FacturacionSchema,
