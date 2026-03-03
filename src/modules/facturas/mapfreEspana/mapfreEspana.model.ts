@@ -173,5 +173,6 @@ FacturaComisionSchema.index(
 
 export default mongoose.model<IFacturaComision>(
   "FacturaComision",
-  FacturaComisionSchema
+  FacturaComisionSchema,
+  "facturacion"
 );
