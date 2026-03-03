@@ -1,6 +1,22 @@
 import dotenv from "dotenv";
 dotenv.config();
 
+/* ================================
+   🔎 DEBUG VARIABLES AWS (TEMP)
+================================ */
+console.log("=== DEBUG ENV AWS ===");
+console.log("AWS_REGION:", process.env.AWS_REGION);
+console.log(
+  "AWS_ACCESS_KEY_ID:",
+  process.env.AWS_ACCESS_KEY_ID ? "OK" : "MISSING"
+);
+console.log(
+  "AWS_SECRET_ACCESS_KEY:",
+  process.env.AWS_SECRET_ACCESS_KEY ? "OK" : "MISSING"
+);
+console.log("======================");
+/* ================================ */
+
 import http from "http";
 import { Server } from "socket.io";
 import jwt from "jsonwebtoken";
@@ -18,20 +34,16 @@ const PORT = process.env.PORT || 3001;
     // 🔹 Crear servidor HTTP
     const server = http.createServer(app);
 
-    // 🔹 Inicializar Socket.IO (MISMA instancia siempre)
+    // 🔹 Inicializar Socket.IO
     const io = new Server(server, {
       cors: {
-        origin: "*",          // ⛔ no rompe nada ahora
-        credentials: true,    // ✅ necesario en producción
+        origin: "*",
+        credentials: true,
       },
     });
 
-    // 🔹 Registrar IO para uso global (controllers)
     setIO(io);
 
-    /* ======================================================
-       🔐 AUTENTICACIÓN SOCKET (JWT)  ← NECESARIA
-    ====================================================== */
     io.use((socket, next) => {
       try {
         const token = socket.handshake.auth?.token;
@@ -51,24 +63,18 @@ const PORT = process.env.PORT || 3001;
       }
     });
 
-    /* ======================================================
-       🔌 CONEXIÓN SOCKET + ROOM DE USUARIO
-    ====================================================== */
     io.on("connection", (socket) => {
       const userId = socket.data.userId;
 
       console.log("🟢 Cliente conectado:", socket.id, "Usuario:", userId);
 
-      // 👉 Room única por usuario
       socket.join(`user:${userId}`);
 
       console.log("🏠 Socket unido a room:", `user:${userId}`);
 
-      // 🔔 PROVISIONAL: confirmar conexión (NO SE TOCA)
       socket.emit("test_event", "✅ Socket funcionando correctamente");
     });
 
-    // 🔔 EVENTO DE PRUEBA (NO se elimina)
     setTimeout(() => {
       try {
         getIO().emit("test_event", "✅ Socket funcionando correctamente");
@@ -78,7 +84,6 @@ const PORT = process.env.PORT || 3001;
       }
     }, 3000);
 
-    // 🔹 Arrancar servidor
     server.listen(PORT, () => {
       console.log(`🚀 Backend escuchando en puerto ${PORT}`);
     });
