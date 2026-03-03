@@ -1,5 +1,5 @@
 import { PutObjectCommand } from "@aws-sdk/client-s3";
-import { s3 } from "../config/s3";
+import { getS3Client } from "../config/s3";
 
 export const uploadToS3 = async (
   buffer: Buffer,
@@ -18,7 +18,8 @@ export const uploadToS3 = async (
     ContentType: mimeType,
   });
 
-  await s3.send(command);
+ const s3 = getS3Client();
+await s3.send(command);
 
   return {
     bucket,
