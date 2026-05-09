@@ -15,6 +15,8 @@ export const procesarPdfConPython = (
     const scriptPath = path.join(process.cwd(), "python", "procesar_mapfre.py");
 
     const pythonCommand = process.env.PYTHON_COMMAND || "python";
+    console.log("🐍 PYTHON COMMAND:", pythonCommand);
+console.log("🐍 PYTHON SCRIPT:", scriptPath);
 
 const python = spawn(pythonCommand, [scriptPath, "--stdin"], {
       cwd: process.cwd(),
@@ -72,24 +74,45 @@ const python = spawn(pythonCommand, [scriptPath, "--stdin"], {
     });
 
     python.on("close", (code) => {
-      if (code !== 0) {
-        console.error("⚠️ STDERR Python:", stderr);
-        return reject(new Error(`Python terminó con código ${code}`));
-      }
+  if (code !== 0) {
+    console.error("⚠️ Python terminó con código:", code);
+    console.error(
+      "⚠️ STDERR Python:",
+      stderr || "STDERR vacío"
+    );
 
-      try {
-        return resolve(JSON.parse(stdout));
-      } catch (e) {
-        console.error("❌ Python no devolvió JSON válido:");
-        console.error(stdout);
+    console.error(
+      "⚠️ STDOUT Python:",
+      stdout || "STDOUT vacío"
+    );
 
-        if (stderr) {
-          console.error("⚠️ STDERR Python:", stderr);
-        }
+    return reject(
+      new Error(
+        `Python terminó con código ${code}. STDERR: ${
+          stderr || "vacío"
+        }`
+      )
+    );
+  }
 
-        return reject(e);
-      }
-    });
+  try {
+    return resolve(JSON.parse(stdout));
+  } catch (e) {
+    console.error("❌ Python no devolvió JSON válido");
+
+    console.error(
+      "⚠️ STDOUT Python:",
+      stdout || "STDOUT vacío"
+    );
+
+    console.error(
+      "⚠️ STDERR Python:",
+      stderr || "STDERR vacío"
+    );
+
+    return reject(e);
+  }
+});
 
     python.stdin.write(pdfBuffer);
     python.stdin.end();
