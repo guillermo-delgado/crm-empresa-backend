@@ -14,7 +14,7 @@ export const procesarPdfConPython = (
   return new Promise((resolve, reject) => {
     const scriptPath = path.join(process.cwd(), "python", "procesar_mapfre.py");
 
-    const pythonCommand = process.env.PYTHON_COMMAND || "python";
+    const pythonCommand = process.env.PYTHON_COMMAND || "python3";
     console.log("🐍 PYTHON COMMAND:", pythonCommand);
 console.log("🐍 PYTHON SCRIPT:", scriptPath);
 
