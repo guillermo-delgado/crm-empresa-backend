@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import pdfParse from "pdf-parse";
+import { procesarPdfConPython } from "../../../utils/procesarPdfConPython";
 
 type ResumenCalculo = {
   abonos: number;
@@ -11,30 +12,16 @@ type ResumenCalculo = {
   liquido: number;
 };
 
-const normalize = (text: any) =>
-  text
-    ?.toString()
-    .toUpperCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .trim();
-
 const parseImporte = (value: string) =>
   parseFloat(value.replace(/\./g, "").replace(",", "."));
 
-/* =====================================================
-   🔥 EXTRAER TRASPASO DE COMISIONES
-===================================================== */
 function extraerTraspasoComisiones(text: string): number {
-
   const lines = text.split("\n");
 
   for (const rawLine of lines) {
-
     const line = rawLine.toUpperCase();
 
     if (line.includes("TRASPASO")) {
-
       const match = line.match(/-?\d+,\d{2}/);
 
       if (match) {
@@ -48,13 +35,8 @@ function extraerTraspasoComisiones(text: string): number {
   return 0;
 }
 
-/* =====================================================
-   🔥 EXTRAER OTROS GASTOS TRIBUTABLES
-===================================================== */
 function extraerOtrosGastosTributables(text: string): number {
-
   const regex = /OTROS GASTOS TRIBUTABLES[\s\S]{0,80}?(-?\d[\d\.]*,\d{2})/i;
-
   const match = text.match(regex);
 
   if (!match) return 0;
@@ -64,15 +46,11 @@ function extraerOtrosGastosTributables(text: string): number {
   );
 }
 
-/* =====================================================
-   EXTRACCIÓN MAPFRE ESPAÑA
-===================================================== */
 const extractRowsFromPdfText = (text: string, logs: string[]) => {
   const rows: any[] = [];
   const lines = text.split("\n");
 
   for (const rawLine of lines) {
-
     const line = rawLine.trim();
     if (!line) continue;
 
@@ -81,7 +59,7 @@ const extractRowsFromPdfText = (text: string, logs: string[]) => {
 
     const fechaIndex = line.indexOf(fechaMatch[0]);
 
-    let antesFecha = line.substring(0, fechaIndex).trim();
+    const antesFecha = line.substring(0, fechaIndex).trim();
     if (!antesFecha) continue;
 
     const ultimoChar = antesFecha.slice(-1).toUpperCase();
@@ -110,7 +88,9 @@ const extractLiquidoFromPdf = (text: string): number | null => {
   const match = text.match(
     /IMPORTE\s+LIQUIDO[\s\.]+(-?\d+,\d{2})/i
   );
+
   if (!match) return null;
+
   return parseImporte(match[1]);
 };
 
@@ -125,14 +105,44 @@ export const procesarMapfreEspana = async (
       });
     }
 
+    try {
+      console.log("🐍 Procesando MAPFRE España con Python como motor principal...");
+
+      const resultadoPython = await procesarPdfConPython(req.file.buffer);
+
+      if (
+        resultadoPython?.ok &&
+        resultadoPython?.resumen &&
+        Array.isArray(resultadoPython?.rows) &&
+        resultadoPython.rows.length > 0
+      ) {
+        return res.json({
+          resumen: resultadoPython.resumen,
+          datosFactura: resultadoPython.datosFactura,
+          rows: resultadoPython.rows,
+          totalesProduccion: resultadoPython.totalesProduccion,
+          desglose: resultadoPython.desglose,
+          logs: resultadoPython.logs || [],
+          metodo: resultadoPython.metodo,
+          sePuedeGuardar:
+            Math.abs(Number(resultadoPython.resumen.diferenciaBase || 0)) <= 0.02,
+        });
+      }
+
+      console.warn("⚠ Python no devolvió resultado válido. Entrando en fallback TypeScript...");
+    } catch (pythonError) {
+      console.error("⚠ Error en Python. Entrando en fallback TypeScript:", pythonError);
+    }
+
     const data = await pdfParse(req.file.buffer);
     const text = data.text;
-   
 
     const logs: string[] = [];
     const addLog = (msg: string) => logs.push(msg);
-     addLog("DEBUG BUSQUEDA OTROS GASTOS:");
-addLog(text.includes("OTROS GASTOS") ? "ENCONTRADO" : "NO ENCONTRADO");
+
+    addLog("⚠ Procesado con fallback TypeScript");
+    addLog("DEBUG BUSQUEDA OTROS GASTOS:");
+    addLog(text.includes("OTROS GASTOS") ? "ENCONTRADO" : "NO ENCONTRADO");
 
     const rows = extractRowsFromPdfText(text, logs);
     const liquidoPdfOficial = extractLiquidoFromPdf(text);
@@ -143,7 +153,6 @@ addLog(text.includes("OTROS GASTOS") ? "ENCONTRADO" : "NO ENCONTRADO");
     let contadorC = 0;
 
     rows.forEach((row, index) => {
-
       addLog(
         `✔ [${index + 1}] ${row.tipoProduccion} | ${row.comision.toFixed(2)}`
       );
@@ -160,9 +169,6 @@ addLog(text.includes("OTROS GASTOS") ? "ENCONTRADO" : "NO ENCONTRADO");
 
     let base = abonos - extornos;
 
-    /* =====================================================
-       🔥 AJUSTE TRASPASO
-    ===================================================== */
     const traspaso = extraerTraspasoComisiones(text);
 
     if (traspaso !== 0) {
@@ -170,10 +176,6 @@ addLog(text.includes("OTROS GASTOS") ? "ENCONTRADO" : "NO ENCONTRADO");
       addLog(`🔁 Traspaso detectado: ${traspaso.toFixed(2)} € (sumado en positivo)`);
     }
 
-    /* =====================================================
-       🔥 SUMAR OTROS GASTOS TRIBUTABLES 
-       RAPELES, INCENTIVOS, ETC...
-    ===================================================== */
     const otrosGastos = extraerOtrosGastosTributables(text);
     addLog("DEBUG OTROS GASTOS: " + otrosGastos);
 
@@ -186,27 +188,26 @@ addLog(text.includes("OTROS GASTOS") ? "ENCONTRADO" : "NO ENCONTRADO");
     const liquidoCalculado = Number((base - irpf).toFixed(2));
 
     let liquidoFinal = liquidoCalculado;
-let diferencia = 0;
-let usandoLiquidoPdf = false;
+    let diferencia = 0;
+    let usandoLiquidoPdf = false;
 
-if (typeof liquidoPdfOficial === "number") {
+    if (typeof liquidoPdfOficial === "number") {
+      diferencia = Number(
+        (liquidoPdfOficial - liquidoCalculado).toFixed(2)
+      );
 
-  diferencia = Number(
-    (liquidoPdfOficial - liquidoCalculado).toFixed(2)
-  );
+      if (Math.abs(diferencia) <= 0.02) {
+        liquidoFinal = liquidoPdfOficial;
+        usandoLiquidoPdf = true;
+      }
+    }
 
-  if (Math.abs(diferencia) <= 0.02) {
-    liquidoFinal = liquidoPdfOficial;
-    usandoLiquidoPdf = true;
-  }
-}
+    addLog(`📄 Líquido oficial PDF: ${liquidoPdfOficial ?? "NO ENCONTRADO"}`);
+    addLog(`📏 Diferencia detectada: ${diferencia.toFixed(2)} €`);
 
-addLog(`📄 Líquido oficial PDF: ${liquidoPdfOficial ?? "NO ENCONTRADO"}`);
-addLog(`📏 Diferencia detectada: ${diferencia.toFixed(2)} €`);
-
-if (usandoLiquidoPdf) {
-  addLog("⚠ Se usa el líquido oficial del PDF (ajuste por redondeo)");
-}
+    if (usandoLiquidoPdf) {
+      addLog("⚠ Se usa el líquido oficial del PDF (ajuste por redondeo)");
+    }
 
     addLog(`💰 Abonos: ${abonos.toFixed(2)} €`);
     addLog(`🔻 Extornos: ${extornos.toFixed(2)} €`);
@@ -227,10 +228,12 @@ if (usandoLiquidoPdf) {
     return res.json({
       resumen,
       logs,
+      metodo: "typescript_fallback",
     });
 
   } catch (error) {
     console.error("Error procesando MAPFRE ESPAÑA:", error);
+
     return res.status(500).json({
       error: "Error procesando PDF MAPFRE ESPAÑA",
     });

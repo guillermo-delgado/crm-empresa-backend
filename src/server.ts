@@ -1,8 +1,6 @@
 import dotenv from "dotenv";
 dotenv.config();
 
-
-
 import http from "http";
 import { Server } from "socket.io";
 import jwt from "jsonwebtoken";
@@ -23,12 +21,19 @@ const PORT = process.env.PORT || 3001;
     // 🔹 Inicializar Socket.IO
     const io = new Server(server, {
       cors: {
-        origin: "*",
+        origin: [
+          process.env.FRONTEND_URL || "http://localhost:3000",
+          process.env.FRONTEND_URL_PROD || "",
+        ],
         credentials: true,
+        methods: ["GET", "POST"],
       },
     });
 
     setIO(io);
+
+    // 🔥 CLAVE: permitir req.app.get("io") en controllers/services
+    app.set("io", io);
 
     io.use((socket, next) => {
       try {

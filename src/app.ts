@@ -14,16 +14,20 @@ import horarioCrmRoutes from "./modules/horario/horario.crm.routes";
 import fichajesCrmRoutes from "./modules/horario/fichajes.crm.routes";
 
 // 🤖 AI CONTABLE
-//import { aiRoutes } from "./modules/ai/ai.routes";
+// import { aiRoutes } from "./modules/ai/ai.routes";
 
 // 🧾 FACTURAS (INTERCEPTOR GENERAL)
 import facturasRoutes from "./modules/facturas/facturas.routes";
+
+// 📊 DASHBOARD CRM
+import dashboardRoutes from "./modules/dashboard/dashboard.routes";
 
 const app = express();
 
 /* =========================
    CORS (LOCAL + PRODUCCIÓN)
 ========================= */
+
 const allowedOrigins = [
   process.env.FRONTEND_URL,
   process.env.FRONTEND_URL_PROD,
@@ -63,9 +67,12 @@ app.use("/api/crm/horario", horarioCrmRoutes);
 app.use("/api/crm/fichajes", fichajesCrmRoutes);
 
 // 🤖 AI CONTABLE (PROTEGIDO)
-//app.use("/api/crm/ai", aiRoutes);
+// app.use("/api/crm/ai", aiRoutes);
 
-// 🧾 FACTURAS (PROCESADOR CENTRAL CON DETECTOR)
+// 🧾 FACTURAS
 app.use("/api/crm/facturas", facturasRoutes);
+
+// 📊 DASHBOARD FACTURACIÓN (ADMIN ONLY)
+app.use("/api/crm/dashboard", dashboardRoutes);
 
 export default app;

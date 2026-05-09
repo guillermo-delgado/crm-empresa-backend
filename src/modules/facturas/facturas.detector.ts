@@ -7,11 +7,13 @@ export const detectarTipoFactura = (
   text: string,
   fileName?: string
 ): TipoFactura => {
-
-  const nombre = (fileName || "").toUpperCase();
+  const nombre = (fileName || "")
+    .toUpperCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
 
   /* =====================================================
-     🔥 PRIORIDAD 1 — NOMBRE DE ARCHIVO
+     PRIORIDAD 1 — NOMBRE DE ARCHIVO
   ===================================================== */
 
   if (nombre.includes("VIDA")) {
@@ -20,30 +22,35 @@ export const detectarTipoFactura = (
 
   if (
     nombre.includes("ESPANA") ||
-    nombre.includes("ESPAÑA") ||
     nombre.includes("ESP")
   ) {
     return "MAPFRE_ESPANA";
   }
 
-  if (!text || text.trim().length === 0) {
-    return "DESCONOCIDO";
+  /* =====================================================
+     PRIORIDAD 2 — SI NO HAY TEXTO, NO USAR GOOGLE OCR
+     Python será quien procese el PDF
+  ===================================================== */
+
+  if (!text || text.trim().length < 50) {
+    console.log("🐍 Texto insuficiente → procesará Python");
+    return "MAPFRE_ESPANA";
   }
 
   /* =====================================================
-     🔥 NORMALIZACIÓN ULTRA AGRESIVA (OCR SAFE)
+     PRIORIDAD 3 — TEXTO NORMALIZADO
   ===================================================== */
 
   const normalizado = text
     .toUpperCase()
-    .normalize("NFD")                         // separa acentos
-    .replace(/[\u0300-\u036f]/g, "")          // elimina acentos
-    .replace(/[\u0000-\u001F]/g, "")          // elimina caracteres invisibles
-    .replace(/[^A-Z0-9]/g, "")                // elimina TODO menos letras y números
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[\u0000-\u001F]/g, "")
+    .replace(/[^A-Z0-9]/g, "")
     .trim();
 
   /* =====================================================
-     🔥 PRIORIDAD 2 — CIF (MÁS FIABLE QUE EL TEXTO)
+     PRIORIDAD 4 — CIF
   ===================================================== */
 
   if (normalizado.includes("A28229599")) {
@@ -55,51 +62,28 @@ export const detectarTipoFactura = (
   }
 
   /* =====================================================
-     🔥 PRIORIDAD 3 — TEXTO FLEXIBLE SIN ESPACIOS
+     PRIORIDAD 5 — TEXTO FLEXIBLE
   ===================================================== */
 
-  // VIDA
   if (
     normalizado.includes("MAPFREVIDA") ||
-    (
-      normalizado.includes("MAPFRE") &&
-      normalizado.includes("VIDA")
-    )
+    (normalizado.includes("MAPFRE") && normalizado.includes("VIDA"))
   ) {
     return "MAPFRE_VIDA";
   }
 
-  // ESPAÑA
   if (
     normalizado.includes("MAPFREESPANA") ||
     normalizado.includes("MAPFREESPA") ||
-    (
-      normalizado.includes("MAPFRE") &&
-      normalizado.includes("ESPA")
-    )
+    (normalizado.includes("MAPFRE") && normalizado.includes("ESPA"))
   ) {
     return "MAPFRE_ESPANA";
   }
 
   /* =====================================================
-     🔥 PRIORIDAD 4 — OCR IMPERFECTO (CASOS EXTREMOS)
-     Detecta si OCR ha roto palabras
+     ÚLTIMO FALLBACK — PYTHON
   ===================================================== */
 
-  // MAPFRE detectado parcialmente
-  const tieneMapfre =
-    normalizado.includes("MAPFRE") ||
-    normalizado.includes("MAPFRE") ||
-    normalizado.includes("MAPF") ||
-    normalizado.includes("MPFRE");
-
-  if (tieneMapfre && normalizado.includes("VIDA")) {
-    return "MAPFRE_VIDA";
-  }
-
-  if (tieneMapfre && normalizado.includes("ESPA")) {
-    return "MAPFRE_ESPANA";
-  }
-
-  return "DESCONOCIDO";
+  console.log("🐍 Tipo no claro → procesará Python");
+  return "MAPFRE_ESPANA";
 };

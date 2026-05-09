@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
-import pdfParse from "pdf-parse";
+// ❌ import pdfParse from "pdf-parse";
+
 
 import { detectarTipoFactura } from "./facturas.detector";
 
@@ -12,7 +13,10 @@ import { procesarMapfreEspanaService }
 import { generarHash } from "../../utils/hashFile";
 import FacturacionModel from "./mapfreVida/mapfreVida.model";
 import { generarUrlFirmada } from "../../services/generarUrlFirmada";
-// import { extraerTextoConOCR } from "../../utils/ocr";
+
+// ✅ NUEVO IMPORT
+import { extraerTextoPDF } from "../../utils/extractTextPdf";
+import { procesarPdfConPython } from "../../utils/procesarPdfConPython";
 
 /* =====================================================
    PROCESAR FACTURA (INTERCEPTOR CENTRAL)
@@ -21,11 +25,9 @@ export const procesarFactura = async (
   req: Request,
   res: Response
 ) => {
-
   console.log("🟢 ENTRA EN procesarFactura");
 
   try {
-
     if (!req.file) {
       return res.status(400).json({
         error: "No se ha enviado archivo",
@@ -59,89 +61,92 @@ export const procesarFactura = async (
     /* 4️⃣ Guardar hash para service */
     (req as any).fileHash = hash;
 
- /* =====================================================
-   5️⃣ Intentar extracción normal con pdf-parse
-===================================================== */
+    /* =====================================================
+       5️⃣ PYTHON COMO MOTOR PRINCIPAL — SIN ARCHIVO TEMPORAL
+    ===================================================== */
 
-let text = "";
-let usadoOCR = false;
+    let text = "";
+    let usadoOCR = false;
 
-try {
-  const pdf = await pdfParse(req.file.buffer);
-  text = pdf.text || "";
-} catch (err) {
-  console.log("⚠️ Error en pdf-parse:", err);
-}
+    try {
+      console.log("🐍 Procesando factura con Python como motor principal...");
 
-console.log("====================================");
-console.log("DEBUG EXTRACCIÓN PDF");
-console.log("====================================");
-console.log("LONGITUD TEXTO:", text.length);
-console.log("====================================");
+      const resultadoPython = await procesarPdfConPython(
+        req.file.buffer,
+        (progreso: { porcentaje: number; texto: string }) => {
+          const io = req.app.get("io");
 
-/* =====================================================
-   6️⃣ FALLBACK OCR si texto vacío o muy corto
-===================================================== */
+          if (!io) return;
+console.log("📡 EMITIENDO PROGRESO FACTURA:", progreso);
+console.log("📡 ROOM:", `user:${usuarioId}`);
+          io.to(`user:${usuarioId}`).emit("factura_progreso", {
+            porcentaje: progreso.porcentaje,
+            texto: progreso.texto,
+          });
+        }
+      );
 
-if (!text || text.trim().length < 80) {
+      if (resultadoPython && resultadoPython.ok) {
+        console.log("🔥 USANDO PYTHON COMO FUENTE PRINCIPAL");
 
-  console.log("⚠️ Texto insuficiente. Activando OCR...");
+        (req as any).resultadoPython = resultadoPython;
 
-//   text = await extraerTextoConOCR(req.file.buffer);
-  usadoOCR = true;
+        text = resultadoPython.text || "";
+        usadoOCR = false;
+      } else {
+        console.log("⚠️ Python no devolvió resultado válido. Intentando fallback TypeScript...");
+      }
 
-  console.log("====================================");
-  console.log("DEBUG OCR");
-  console.log("====================================");
-  console.log("LONGITUD TEXTO OCR:", text.length);
-  console.log("====================================");
-}
+    } catch (error) {
+      console.log("❌ Error en Python principal:", error);
+      console.log("⚠️ Intentando fallback TypeScript...");
+    }
 
-if (!text || text.trim().length < 50) {
-  return res.status(400).json({
-    error: "No se pudo extraer texto válido del PDF.",
-  });
-}
+    /* =====================================================
+       6️⃣ FALLBACK TYPESCRIPT — SOLO SI PYTHON FALLA
+       Google OCR eliminado
+    ===================================================== */
 
-/* =====================================================
-   🔥 NORMALIZACIÓN FUERTE POST-OCR
-===================================================== */
+    if (!text || text.trim().length < 50) {
+      try {
+        text = await extraerTextoPDF(req.file.buffer);
+        usadoOCR = false;
 
-text = text
-  .normalize("NFD")                          // separa acentos
-  .replace(/[\u0300-\u036f]/g, "")           // elimina acentos
-  .replace(/\u00A0/g, " ")                   // elimina NBSP
-  .replace(/[^\x20-\x7E\n]/g, " ")           // elimina caracteres invisibles
-  .replace(/\s{2,}/g, " ")                   // limpia espacios múltiples
-  .replace(/\n{3,}/g, "\n\n")                // limpia saltos excesivos
-  .trim();
+        console.log("⚠️ Fallback TypeScript usado");
+      } catch (err) {
+        console.log("❌ Error en fallback TypeScript:", err);
+      }
+    }
 
-console.log("====================================");
-console.log("TEXTO FINAL NORMALIZADO (primeros 500)");
-console.log("====================================");
-console.log(text.slice(0, 500));
-console.log("====================================");
-    if (!text || text.trim().length === 0) {
+    if (!text || text.trim().length < 50) {
       return res.status(400).json({
-        error: "No se pudo extraer texto del PDF ni con OCR.",
+        error: "No se pudo extraer texto válido del PDF con Python ni con fallback TypeScript.",
       });
     }
 
     /* =====================================================
-       DEBUG DETECTOR
+       🔥 NORMALIZACIÓN
     ===================================================== */
 
-    console.log("====================================");
-    console.log("DEBUG DETECTOR FACTURA");
-    console.log("====================================");
-    console.log("INCLUDES MAPFRE?", text.toUpperCase().includes("MAPFRE"));
-    console.log("INCLUDES VIDA?", text.toUpperCase().includes("VIDA"));
-    console.log("INCLUDES ESPA?", text.toUpperCase().includes("ESPA"));
-    console.log("INCLUDES MAPFRE VIDA?", text.toUpperCase().includes("MAPFRE VIDA"));
-    console.log("INCLUDES MAPFRE ESPA?", text.toUpperCase().includes("MAPFRE ESPA"));
-    console.log("====================================");
+    text = text
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/\u00A0/g, " ")
+      .replace(/[^\x20-\x7E\n]/g, " ")
+      .replace(/\s{2,}/g, " ")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
 
-    /* 7️⃣ Detectar tipo */
+    if (!text || text.trim().length === 0) {
+      return res.status(400).json({
+        error: "No se pudo extraer texto del PDF.",
+      });
+    }
+
+    /* =====================================================
+       7️⃣ Detectar tipo
+    ===================================================== */
+
     const tipo = detectarTipoFactura(
       text,
       req.file.originalname
@@ -149,9 +154,11 @@ console.log("====================================");
 
     console.log("TIPO DETECTADO:", tipo);
 
-    /* 8️⃣ Enrutar */
-    switch (tipo) {
+    /* =====================================================
+       8️⃣ Enrutar
+    ===================================================== */
 
+    switch (tipo) {
       case "MAPFRE_VIDA":
         console.log("🟢 DETECTADO MAPFRE VIDA");
         return procesarMapfreVidaService(text, req, res);
@@ -167,7 +174,6 @@ console.log("====================================");
     }
 
   } catch (error) {
-
     console.error("🔥 Error procesando factura:", error);
 
     return res.status(500).json({
@@ -177,7 +183,7 @@ console.log("====================================");
 };
 
 /* =====================================================
-   OBTENER ARCHIVO (URL FIRMADA 5 MIN)
+   OBTENER ARCHIVO (SIN CAMBIOS)
 ===================================================== */
 export const obtenerArchivoFactura = async (
   req: Request,

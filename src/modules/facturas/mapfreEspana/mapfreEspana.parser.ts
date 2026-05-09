@@ -1,5 +1,51 @@
 import { LineaMapfreEspana } from "./mapfreEspana.types";
 
+
+function reconstruirLineasOCR(text: string): string[] {
+
+  const rawLines = text
+    .split("\n")
+    .map(l => l.trim())
+    .filter(Boolean);
+
+  const result: string[] = [];
+  let buffer = "";
+
+  for (const line of rawLines) {
+
+    // 🔥 nueva fila si detecta póliza (muchos dígitos al inicio)
+    if (/^\d{10,}/.test(line)) {
+
+      if (buffer) result.push(buffer);
+      buffer = line;
+      continue;
+    }
+
+    // 🔥 si la línea empieza por fecha → pertenece a la anterior
+    else if (/^\d{2}\/\d{2}\/\d{4}/.test(line)) {
+
+      buffer += " " + line;
+      continue;
+    }
+
+    // 🔥 NUEVO: números OCR partidos
+    else if (/^-?\d[\d\.]*,\d{2}/.test(line)) {
+
+      buffer += " " + line;
+      continue;
+    }
+
+    else {
+
+      buffer += " " + line;
+    }
+  }
+
+  if (buffer) result.push(buffer);
+
+  return result;
+}
+
 /* =====================================================
    PARSEAR LÍNEAS MAPFRE ESPAÑA
 ===================================================== */
@@ -13,40 +59,83 @@ export function parseMapfreEspanaFromText(
     return rows;
   }
 
-  const lines = text.split(/\r?\n/);
+  const lines = reconstruirLineasOCR(text);
 
   for (const rawLine of lines) {
 
     const line = rawLine.replace(/\s+/g, " ").trim();
     if (!line) continue;
 
-    // 1️⃣ Debe contener fecha
+    /* ===============================
+       1️⃣ POLIZA (OBLIGATORIO)
+    =============================== */
+
+    const polizaMatch = line.match(/\b\d{10,}\b/);
+    if (!polizaMatch) continue;
+
+    const poliza = polizaMatch[0];
+
+    /* ===============================
+       2️⃣ FECHA (REAL o fallback)
+    =============================== */
+
     const fechaMatch = line.match(/\d{2}\/\d{2}\/\d{4}/);
-    if (!fechaMatch) continue;
 
-    const fechaIndex = line.indexOf(fechaMatch[0]);
+    const fecha = fechaMatch ? fechaMatch[0] : "";
+    const fechaIndex = fechaMatch
+      ? line.indexOf(fecha)
+      : Math.floor(line.length / 2);
 
-    // 2️⃣ Bloque antes de la fecha
+    /* ===============================
+       3️⃣ BLOQUE ANTES DE FECHA
+    =============================== */
+
     let antesFecha = line.substring(0, fechaIndex).trim();
-
     if (!antesFecha) continue;
 
-    // 🔥 Obtener última letra real (N o C)
-    const ultimoChar = antesFecha.slice(-1).toUpperCase();
+    /* ===============================
+       4️⃣ TIPO PRODUCCIÓN (N / C)
+    =============================== */
 
-    if (ultimoChar !== "N" && ultimoChar !== "C") continue;
+    let tipoProduccion: "N" | "C" | null = null;
 
-    const tipoProduccion = ultimoChar as "N" | "C";
+    if (/\bN\b/.test(antesFecha)) tipoProduccion = "N";
+    if (/\bC\b/.test(antesFecha)) tipoProduccion = "C";
 
-    // 3️⃣ Tomador = todo menos la última letra
-    const tomador = antesFecha.slice(0, -1).trim();
+    // fallback por último carácter
+    if (!tipoProduccion) {
+      const ultimoChar = antesFecha.slice(-1).toUpperCase();
+      if (ultimoChar === "N" || ultimoChar === "C") {
+        tipoProduccion = ultimoChar as "N" | "C";
+      }
+    }
+
+    if (!tipoProduccion) continue;
+
+    /* ===============================
+       5️⃣ TOMADOR LIMPIO
+    =============================== */
+
+    const tomador = antesFecha
+      .replace(poliza, "")
+      .replace(/\b(N|C)\b/g, "")
+      .trim();
 
     if (!tomador || tomador.length < 3) continue;
 
-    // 4️⃣ Extraer comisión (último decimal de la línea)
-    const numeros = line.match(/-?\d+,\d{2}/g);
-    if (!numeros || numeros.length === 0) continue;
+    /* ===============================
+       6️⃣ NUMEROS (COLUMNA DERECHA)
+    =============================== */
 
+    const numeros = line.match(/-?\d[\d\.]*,\d{2}/g);
+
+    if (!numeros || numeros.length < 2) continue;
+
+    // ⚠️ MAPFRE suele tener:
+    // total, prima, %, comisión
+    const totalRecibo = numeros[0] || "";
+    const primaBase = numeros[1] || "";
+    const porcentaje = numeros[2] || "";
     const ultima = numeros[numeros.length - 1];
 
     const comision = parseFloat(
@@ -55,11 +144,34 @@ export function parseMapfreEspanaFromText(
 
     if (isNaN(comision)) continue;
 
+    /* ===============================
+       🔥 DEBUG VISUAL (CLAVE)
+    =============================== */
+
+    console.log(
+      "✅ LINEA:",
+      [
+        poliza,
+        tomador,
+        tipoProduccion,
+        fecha,
+        totalRecibo,
+        primaBase,
+        porcentaje,
+        ultima
+      ].join(" | ")
+    );
+
+    /* ===============================
+       RESULTADO FINAL
+    =============================== */
+
     rows.push({
       comision,
       tomador,
       concepto: line,
       tipoProduccion,
+      fechaEfecto: fecha
     });
   }
 
@@ -95,25 +207,93 @@ export function calcularTotalesProduccionMapfreEspana(
   };
 }
 
+export function extraerBaseResumenMapfre(text: string): number | null {
+
+  const match = text.match(
+    /BASE[\s\S]{0,100}?(-?\d[\d\.]*,\d{2})/i
+  );
+
+  if (!match) return null;
+
+  return parseFloat(
+    match[1].replace(/\./g, "").replace(",", ".")
+  );
+}
+
+export function extraerIRPFMapfre(text: string): number | null {
+
+  const match = text.match(
+    /IRPF[\s\S]{0,100}?(-?\d[\d\.]*,\d{2})/i
+  );
+
+  if (!match) return null;
+
+  return parseFloat(
+    match[1].replace(/\./g, "").replace(",", ".")
+  );
+}
+
 /* =====================================================
    EXTRAER IMPORTE LÍQUIDO OFICIAL
 ===================================================== */
 export function extraerLiquidoOficialMapfreEspana(
   text: string
 ): number | null {
-  if (!text) return null;
 
-  const match = text.match(
-    /IMPORTE\s+LIQUIDO[\s\.]+(-?[\d\.]+,\d{2})/i
-  );
+  const lines = text.split("\n");
 
-  if (!match) return null;
+  for (let i = 0; i < lines.length; i++) {
 
-  const valor = parseFloat(
-    match[1].replace(/\./g, "").replace(",", ".")
-  );
+    const rawLine = lines[i];
 
-  return isNaN(valor) ? null : valor;
+    const line = rawLine
+      .toUpperCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^A-Z0-9 ]/g, "");
+
+    if (line.includes("IMPORTE") && line.includes("LIQUID")) {
+
+      console.log("🎯 BLOQUE LIQUIDO DETECTADO");
+
+      // 🔥 buscamos en un rango amplio (hasta 30 líneas)
+      let numeros: string[] = [];
+
+      for (let j = 0; j < 30; j++) {
+
+        const siguiente = lines[i + j];
+        if (!siguiente) break;
+
+        const encontrados = siguiente.match(/-?\d[\d\.]*,\d{2}/g);
+
+        if (encontrados) {
+          numeros.push(...encontrados);
+        }
+      }
+
+      console.log("🔢 NUMEROS DETECTADOS:", numeros);
+
+      if (!numeros || numeros.length === 0) continue;
+
+      // 🔥 lógica inteligente:
+      // el líquido suele ser el MAYOR valor del bloque
+      let max = 0;
+
+      for (const num of numeros) {
+        const val = parseFloat(
+          num.replace(/\./g, "").replace(",", ".")
+        );
+
+        if (val > max) max = val;
+      }
+
+      console.log("💰 LIQUIDO DETECTADO:", max);
+
+      return max;
+    }
+  }
+
+  return null;
 }
 
 /* =====================================================
@@ -137,7 +317,7 @@ export function extraerDatosFacturaMapfreEspana(
   let fecha = "";
   let periodo = "";
 
-  /* ================= Nº FACTURA ================= */
+  /* ================= Nº FACTURA (MÉTODO ORIGINAL) ================= */
 
   for (let i = 0; i < lines.length; i++) {
 
@@ -163,6 +343,32 @@ export function extraerDatosFacturaMapfreEspana(
       if (periodoMatch) periodo = periodoMatch[0];
 
       break;
+    }
+  }
+
+  /* =====================================================
+     🔥 FALLBACK OCR
+  ===================================================== */
+
+  if (!numeroFactura || !fecha || !periodo) {
+
+    const upper = text.toUpperCase();
+
+    if (!numeroFactura) {
+      const match = upper.match(/\b\d{15,}[A-Z0-9]*\b/);
+      if (match) numeroFactura = match[0];
+    }
+
+    if (!fecha) {
+      const match = upper.match(/\b\d{2}\/\d{2}\/\d{4}\b/);
+      if (match) fecha = match[0];
+    }
+
+    if (!periodo) {
+      const match = upper.match(
+        /(ENERO|FEBRERO|MARZO|ABRIL|MAYO|JUNIO|JULIO|AGOSTO|SEPTIEMBRE|OCTUBRE|NOVIEMBRE|DICIEMBRE)-\d{4}/
+      );
+      if (match) periodo = match[0];
     }
   }
 

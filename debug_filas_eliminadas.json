@@ -1,0 +1,35 @@
+[
+  {
+    "poliza": "0382280137291",
+    "tomador": "MONTALBAN ALCALA MARGARITA",
+    "tipoProduccion": "C",
+    "fechaVencimiento": "21/02/2026",
+    "totalRecibo": 0.5,
+    "primaBase": 0.47,
+    "porcentaje": 25.5,
+    "comision": 0.12,
+    "concepto": "0382280137291 MONTALBAN ALCALA MARGARITA Cc 21/02/2026 0,50 0,47 25,50 0,12"
+  },
+  {
+    "poliza": "0382580143396",
+    "tomador": "VALVERDE SANCHEZ GABINO",
+    "tipoProduccion": "N",
+    "fechaVencimiento": "24/03/2026",
+    "totalRecibo": 7.46,
+    "primaBase": 6.91,
+    "porcentaje": 25.0,
+    "comision": 1.73,
+    "concepto": "0382580143396 VALVERDE SANCHEZ GABINO N 24/03/2026 7,46 6,91 25,00 1,73"
+  },
+  {
+    "poliza": "0382280137291",
+    "tomador": "MONTALBAN ALCALA MARGARITA",
+    "tipoProduccion": "C",
+    "fechaVencimiento": "21/03/2026",
+    "totalRecibo": 0.5,
+    "primaBase": 0.47,
+    "porcentaje": 25.5,
+    "comision": 0.12,
+    "concepto": "0382280137291 MONTALBAN ALCALA MARGARITA Cc 21/03/2026 0,50 0,47 25,50 0,12"
+  }
+]
