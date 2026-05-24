@@ -15,7 +15,7 @@ RUN apt-get update && apt-get install -y \
 COPY package*.json ./
 RUN npm ci
 
-COPY requirements.txt ./
+COPY python-requirements/requirements.txt ./
 RUN python3 -m pip install --break-system-packages -r requirements.txt
 
 COPY . .
