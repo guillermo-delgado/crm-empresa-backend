@@ -17,9 +17,9 @@ const ejecutarExtractorPython = (
 ): Promise<any> => {
   return new Promise((resolve, reject) => {
     const pythonExecutable =
-      process.platform === "win32"
-        ? `${process.cwd()}\\.venv\\Scripts\\python.exe`
-        : `${process.cwd()}/.venv/bin/python`;
+  process.platform === "win32"
+    ? `${process.cwd()}\\.venv\\Scripts\\python.exe`
+    : "python3";
 
     const codigoPython = `
 import sys
