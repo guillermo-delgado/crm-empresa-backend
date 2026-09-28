@@ -3,3 +3,7 @@ pytesseract
 pymupdf
 Pillow
 pdf2image
+fastapi
+uvicorn
+python-multipart
+opencv-python-headless
