@@ -11,7 +11,9 @@ import {
   extraerDatosFacturaMapfreEspana,
   calcularTotalesProduccionMapfreEspana,
 } from "./mapfreEspana.parser";
-import { agruparFilas, parseFila } from "./mapfreEspana.filas";
+import { parseFila } from "./mapfreEspana.filas";
+import { deleteFromS3 } from "../../../services/deleteFromS3";
+import { encryptJson } from "../../../services/cryptoService";
 
 /* =====================================================
    🔎 DEBUG CONCEPTOS RESUMEN
@@ -557,16 +559,17 @@ export const procesarMapfreEspanaService = async (
     const hash = (req as any).fileHash;
     const resultadoPython = (req as any).resultadoPython;
 
-    if (!usuarioId) {
-      if (!req.file) {
+  if (!req.file) {
   return res.status(400).json({
-    error: "No se ha enviado archivo"
+    error: "No se ha enviado archivo",
   });
 }
-      return res.status(401).json({
-        error: "Usuario no autenticado",
-      });
-    }
+
+if (!usuarioId) {
+  return res.status(401).json({
+    error: "Usuario no autenticado",
+  });
+}
 
     const cleanText = text
   .replace(/\r/g, "")
@@ -600,12 +603,17 @@ if (
 
   console.log("🔥 MAPFRE ESPAÑA USANDO ROWS DE PYTHON");
 
-  rows = resultadoPython.rows.map((r: any) => ({
-    tomador: r.tomador || "",
-    concepto: r.concepto || "",
-    tipoProduccion: r.tipoProduccion,
-    comision: Number(r.comision || 0),
-  }));
+ rows = resultadoPython.rows.map((r: any) => ({
+  poliza: r.poliza || "",
+  tomador: r.tomador || "",
+  concepto: r.concepto || "",
+  tipoProduccion: r.tipoProduccion || "",
+  fechaVencimiento: r.fechaVencimiento || "",
+  totalRecibo: Number(r.totalRecibo || 0),
+  primaBase: Number(r.primaBase || 0),
+  porcentaje: Number(r.porcentaje || 0),
+  comision: Number(r.comision || 0),
+} as any));
 
   addLog(`Filas detectadas Python: ${rows.length}`);
 
@@ -1022,13 +1030,20 @@ const totalRenovaciones =
     addLog(`Periodo: ${datosFactura.periodo}`);
     addLog(`Filas detectadas: ${rows.length}`);
    
-    addLog(`Extornos: ${resultado.extornos.toFixed(2)} €`);
+   addLog(`Extornos: ${resultado.extornos.toFixed(2)} €`); 
     addLog(`Base: ${resultado.base.toFixed(2)} €`);
     addLog(`IRPF: ${resultado.irpf.toFixed(2)} €`);
     addLog(`Nueva Producción: ${totalNuevaProduccion.toFixed(2)} €`);
     addLog(`Renovaciones: ${totalRenovaciones.toFixed(2)} €`);
-   addLog(`O. BANCARIAS: ${operacionesBancarias.toFixed(2)} €`);
-addLog(`IVA NO SEGURO (21%): ${(resultadoPython?.desglose?.ivaNoSeguro ?? 0).toFixed(2)} €`);
+  if (Number(operacionesBancarias) !== 0) {
+  addLog(`O. BANCARIAS: ${operacionesBancarias.toFixed(2)} €`);
+}
+
+const ivaNoSeguroLog = Number(resultadoPython?.desglose?.ivaNoSeguro ?? 0);
+
+if (ivaNoSeguroLog !== 0) {
+  addLog(`IVA NO SEGURO (21%): ${ivaNoSeguroLog.toFixed(2)} €`);
+}
     addLog(`Líquido final mostrado: ${resultado.liquido.toFixed(2)} €`);
   /* ================= GUARDADO EN S3 + BASE DE DATOS ================= */
 
@@ -1036,20 +1051,40 @@ if (sePuedeGuardar) {
 
   try {
 
-    /* =====================================================
-   🔎 BLOQUEAR DUPLICADO POR HASH
+/* =====================================================
+   🔎 BLOQUEAR DUPLICADOS / ACTUALIZAR FACTURA
 ===================================================== */
 
-if (hash) {
+const replace = req.body?.replace === "true";
 
-  const existeHash = await Facturacion.findOne({
+let facturaAnteriorParaBorrar: any = null;
+
+let existeHash: any = null;
+
+if (hash) {
+  existeHash = await Facturacion.findOne({
     usuarioId,
     archivoHash: hash,
   });
+}
 
-  if (existeHash) {
+const existeNumero = await Facturacion.findOne({
+  usuarioId,
+  numeroFactura: datosFactura.numeroFactura,
+});
 
-    addLog("⚠ Este archivo ya fue subido anteriormente (hash duplicado)");
+/* =====================================================
+   🔎 SI HASH Y NÚMERO APUNTAN A FACTURAS DISTINTAS
+===================================================== */
+
+if (existeHash && existeNumero) {
+  const mismoRegistro =
+    existeHash._id.toString() === existeNumero._id.toString();
+
+  if (!mismoRegistro) {
+    addLog("❌ Conflicto de duplicados");
+    addLog("El archivo coincide por hash con una factura, pero el número pertenece a otra distinta.");
+    addLog("No se puede actualizar automáticamente por seguridad.");
 
     return res.json({
       resumen: {
@@ -1060,104 +1095,297 @@ if (hash) {
       datosFactura,
       logs,
       sePuedeGuardar: false,
+      requiereRevisionManual: true,
+      motivoReemplazo: "CONFLICTO_HASH_NUMERO_FACTURA",
     });
   }
 }
 
-    // 🔎 Evitar duplicados
-    const existe = await Facturacion.findOne({
-      usuarioId,
-      
-      numeroFactura: datosFactura.numeroFactura,
-    });
+const facturaExistente = existeNumero || existeHash;
 
-    if (existe) {
+if (facturaExistente && !replace) {
+  const motivo = existeNumero
+    ? "NUMERO_FACTURA_DUPLICADO"
+    : "HASH_DUPLICADO";
 
-      addLog("⚠ Esta factura ya existe en la base de datos");
+  addLog("⚠ Esta factura ya existe en la base de datos");
+  addLog("Puedes reemplazarla confirmando la actualización.");
 
-    } else {
+  return res.json({
+    resumen: {
+      ...resultado,
+      nuevaProduccion: totalNuevaProduccion,
+      renovaciones: totalRenovaciones,
+    },
+    datosFactura,
+    logs,
+    sePuedeGuardar: false,
+    requiereConfirmacionReemplazo: true,
+    motivoReemplazo: motivo,
+  });
+}
 
-      /* =====================================================
-         ORGANIZAR CARPETAS S3 (AÑO / MES)
-      ===================================================== */
+if (facturaExistente && replace) {
+  facturaAnteriorParaBorrar = facturaExistente;
 
-      const periodo = datosFactura.periodo || "SIN_PERIODO";
+  addLog("♻ Se reemplazará la factura anterior detectada.");
+}
 
-      let mes = "Desconocido";
-      let anio = "0000";
+/* =====================================================
+   ORGANIZAR CARPETAS S3 (AÑO / MES)
+===================================================== */
 
-      if (periodo.includes("-")) {
-        const partes = periodo.split("-");
-        mes =
-          partes[0].charAt(0) +
-          partes[0].slice(1).toLowerCase();
-        anio = partes[1];
-      }
+const periodo = datosFactura.periodo || "SIN_PERIODO";
 
-      const folderPath = `${anio}/${mes}`;
+let mes = "Desconocido";
+let anio = "0000";
 
-      const nombreArchivo = `MapfreEspana-${mes}-${anio}-${datosFactura.numeroFactura}.pdf`;
+if (periodo.includes("-")) {
+  const partes = periodo.split("-");
+  mes =
+    partes[0].charAt(0) +
+    partes[0].slice(1).toLowerCase();
+  anio = partes[1];
+}
 
-      const s3Result = await uploadToS3(
-        req.file!.buffer,
-        nombreArchivo,
-        req.file!.mimetype,
-        folderPath
-      );
+const folderPath = `${anio}/${mes}`;
 
-      addLog(`Archivo subido a S3: ${s3Result.key}`);
+const nombreArchivo = `MapfreEspana-${mes}-${anio}-${datosFactura.numeroFactura}.pdf`;
+const nombreArchivoJson = `MapfreEspana-${mes}-${anio}-${datosFactura.numeroFactura}.json.enc`;
 
-      /* =====================================================
-         GUARDAR EN MONGO
-      ===================================================== */
+const facturaJsonNormalizada = {
+  schemaVersion: 1,
+  tipoFactura: "MAPFRE_ESPANA",
 
-      await Facturacion.create({
+  datosFactura,
 
-        usuarioId,
-        tipoFactura: "MAPFRE_ESPANA",
+  resumen: {
+    filasDetectadas: rows.length,
+    extornos: resultado.extornos,
+    base: resultado.base,
+    irpf: resultado.irpf,
+    nuevaProduccion: totalNuevaProduccion,
+    renovaciones: totalRenovaciones,
+    liquidoFinal: resultado.liquido,
+    liquidoOficial,
+    liquidoCalculado: resultado.liquidoCalculado,
+    diferencia: resultado.diferencia,
+    usandoLiquidoOficial: resultado.usandoLiquidoOficial,
+  },
 
-        numeroFactura: datosFactura.numeroFactura,
-        fechaTexto: datosFactura.fecha,
-        periodo: datosFactura.periodo,
-        razonSocial: datosFactura.razonSocial,
-        cif: datosFactura.cif,
+  conceptosResumen: {
+    sistemaCompensacion: desgloseInteligente.sistemaCompensacion,
+    incentivos: desgloseInteligente.incentivos,
+    rappeles: desgloseInteligente.rappeles,
+    otrasContraprestaciones: desgloseInteligente.otrasContraprestaciones,
+    lineasDelegadas,
+  },
 
-        
-        extornos: resultado.extornos,
-        base: resultado.base,
-        irpf: resultado.irpf,
+  lineas: rows.map((row: any) => ({
+    poliza: row.poliza || "",
+    tomador: row.tomador || "",
+    tipoProduccion: row.tipoProduccion || "",
+    fechaVencimiento: row.fechaVencimiento || "",
+    totalRecibo: Number(row.totalRecibo || 0),
+    primaBase: Number(row.primaBase || 0),
+    porcentaje: Number(row.porcentaje || 0),
+    comision: Number(row.comision || 0),
+    conceptoOriginal: row.concepto || "",
+    importes: [
+      Number(row.totalRecibo || 0),
+      Number(row.primaBase || 0),
+      Number(row.porcentaje || 0),
+      Number(row.comision || 0),
+    ],
+  })),
 
-        traspaso,
-        otrosGastos,
-        incentivos,
-        rappeles,
-        otrasContraprestaciones,
-        comisionesNoSeguro,
-        lineasDelegadas,
-        operacionesBancarias,
-        ivaOperaciones: resultadoPython?.desglose?.ivaOperaciones ?? 0,
+  generadoEn: new Date().toISOString(),
+};
 
-        liquidoCalculado: resultado.liquidoCalculado,
-        liquidoOficial,
-        liquidoFinal: resultado.liquido,
-        diferencia: resultado.diferencia,
-        usandoLiquidoOficial: resultado.usandoLiquidoOficial,
+const s3Result = await uploadToS3(
+  req.file!.buffer,
+  nombreArchivo,
+  req.file!.mimetype,
+  folderPath
+);
 
-        nuevaProduccion: totalNuevaProduccion,
-        renovaciones: totalRenovaciones,
+const jsonBuffer = encryptJson(facturaJsonNormalizada);
 
-        filasDetectadas: rows.length,
+const jsonS3Result = await uploadToS3(
+  jsonBuffer,
+  nombreArchivoJson,
+  "application/octet-stream",
+  folderPath
+);
 
-        nombreArchivoOriginal: req.file?.originalname,
-        s3Key: s3Result.key,
-        archivoHash: hash,
+addLog(`JSON normalizado subido a S3: ${jsonS3Result.key}`);
+addLog(`Archivo subido a S3: ${s3Result.key}`);
 
-        logs,
-        sePuedeGuardar,
-      });
+/* =====================================================
+   GUARDAR EN MONGO
+===================================================== */
 
-      addLog("✅ Factura guardada correctamente en base de datos");
-    }
+const facturaMongo: Record<string, any> = {
+  usuarioId,
+  tipoFactura: "MAPFRE_ESPANA",
+
+  numeroFactura: datosFactura.numeroFactura,
+  fechaTexto: datosFactura.fecha,
+  periodo: datosFactura.periodo,
+  razonSocial: datosFactura.razonSocial,
+  cif: datosFactura.cif,
+
+  nombreArchivoOriginal: req.file?.originalname,
+  s3Key: s3Result.key,
+  jsonS3Key: jsonS3Result.key,
+  jsonEncrypted: true,
+  jsonEncryptionVersion: 1,
+  archivoHash: hash,
+
+  logs,
+  sePuedeGuardar,
+
+  usandoLiquidoOficial: resultado.usandoLiquidoOficial,
+};
+
+const addNumberIfNotZero = (
+  key: string,
+  value: number | null | undefined
+) => {
+  if (typeof value !== "number") return;
+
+  if (Math.abs(value) < 0.01) return;
+
+  facturaMongo[key] = value;
+};
+
+/* ================= PRODUCCIÓN ================= */
+
+addNumberIfNotZero(
+  "nuevaProduccion",
+  totalNuevaProduccion
+);
+
+addNumberIfNotZero(
+  "renovaciones",
+  totalRenovaciones
+);
+
+addNumberIfNotZero(
+  "filasDetectadas",
+  rows.length
+);
+
+/* ================= ECONÓMICOS ================= */
+
+addNumberIfNotZero(
+  "extornos",
+  resultado.extornos
+);
+
+addNumberIfNotZero(
+  "base",
+  resultado.base
+);
+
+addNumberIfNotZero(
+  "irpf",
+  resultado.irpf
+);
+
+addNumberIfNotZero(
+  "traspaso",
+  traspaso
+);
+
+addNumberIfNotZero(
+  "otrosGastos",
+  otrosGastos
+);
+
+addNumberIfNotZero(
+  "incentivos",
+  incentivos
+);
+
+addNumberIfNotZero(
+  "rappeles",
+  rappeles
+);
+
+addNumberIfNotZero(
+  "otrasContraprestaciones",
+  otrasContraprestaciones
+);
+
+addNumberIfNotZero(
+  "comisionesNoSeguro",
+  comisionesNoSeguro
+);
+
+addNumberIfNotZero(
+  "lineasDelegadas",
+  lineasDelegadas
+);
+
+addNumberIfNotZero(
+  "operacionesBancarias",
+  operacionesBancarias
+);
+
+addNumberIfNotZero(
+  "ivaOperaciones",
+  resultadoPython?.desglose?.ivaOperaciones ?? 0
+);
+
+addNumberIfNotZero(
+  "compensaciones",
+  resultado.compensaciones
+);
+
+/* ================= LÍQUIDOS ================= */
+
+addNumberIfNotZero(
+  "liquidoCalculado",
+  resultado.liquidoCalculado
+);
+
+addNumberIfNotZero(
+  "liquidoOficial",
+  liquidoOficial
+);
+
+addNumberIfNotZero(
+  "liquidoFinal",
+  resultado.liquido
+);
+
+addNumberIfNotZero(
+  "diferencia",
+  resultado.diferencia
+);
+
+/* ================= GUARDAR ================= */
+
+if (facturaAnteriorParaBorrar) {
+  if (
+    facturaAnteriorParaBorrar.s3Key &&
+    facturaAnteriorParaBorrar.s3Key !== s3Result.key
+  ) {
+    await deleteFromS3(facturaAnteriorParaBorrar.s3Key);
+  }
+
+  if (
+    facturaAnteriorParaBorrar.jsonS3Key &&
+    facturaAnteriorParaBorrar.jsonS3Key !== jsonS3Result.key
+  ) {
+    await deleteFromS3(facturaAnteriorParaBorrar.jsonS3Key);
+  }
+
+  addLog("♻ Limpieza de archivos anteriores revisada correctamente.");
+}
+
+addLog("✅ Factura guardada correctamente en base de datos");
 
   } catch (error: any) {
 

@@ -1,4 +1,5 @@
 import { Router } from "express";
+import multer from "multer";
 import { requireJornadaActiva } from "../../middlewares/requireJornadaActiva";
 
 import {
@@ -15,6 +16,7 @@ import {
   obtenerKPIsVentas,
   obtenerPolizasComparativa3Anios,
   obtenerVentaAdelantada, // 🔥 NUEVO CONTROLADOR
+  descargarAdjuntoVenta,
 } from "./ventas.controller";
 
 import { authMiddleware } from "../../middlewares/auth";
@@ -24,6 +26,13 @@ import {
 } from "./ventas.validator";
 
 const router = Router();
+const uploadVentas = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 15 * 1024 * 1024,
+    files: 20,
+  },
+});
 
 /* =========================
    SOLICITUDES EMPLEADOS
@@ -41,6 +50,7 @@ router.post(
   "/",
   authMiddleware,
   requireJornadaActiva,
+  uploadVentas.any(),
   validateCreateVenta,
   crearVenta
 );
@@ -103,6 +113,7 @@ router.put(
   "/:id",
   authMiddleware,
   requireJornadaActiva,
+  uploadVentas.any(),
   validateEditVenta,
   editarVenta
 );
@@ -135,6 +146,16 @@ router.get(
   authMiddleware,
   requireJornadaActiva,
   obtenerSolicitudPendientePorVenta
+);
+
+/* =========================
+   DESCARGAR ADJUNTO CIFRADO
+========================= */
+router.get(
+  "/:id/adjuntos/:adjuntoId",
+  authMiddleware,
+  requireJornadaActiva,
+  descargarAdjuntoVenta
 );
 
 /* =========================

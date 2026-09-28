@@ -3,38 +3,94 @@ export type TipoFactura =
   | "MAPFRE_ESPANA"
   | "DESCONOCIDO";
 
+export type SubtipoFacturaVida =
+  | "VIDA_NORMAL"
+  | "VIDA_INVERSION";
+
 export const detectarTipoFactura = (
   text: string,
   fileName?: string
-): TipoFactura => {
+): {
+  tipoFactura: TipoFactura;
+  subtipoFactura?: SubtipoFacturaVida;
+} => {
+
   const nombre = (fileName || "")
     .toUpperCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
+
+  const textoUpper = (text || "")
+    .toUpperCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+  /* =====================================================
+     DETECCIÓN SUBTIPO VIDA INVERSIÓN
+  ===================================================== */
+
+  const textoCompacto = textoUpper
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^A-Z0-9]/g, "");
+
+  const esVidaInversion =
+    (
+      textoCompacto.includes("BASELIQUIDACION") ||
+      textoCompacto.includes("BASELIQUIDAC")
+    ) &&
+    textoCompacto.includes("BRUTO") &&
+    (
+      textoCompacto.includes("DEVENGADO") ||
+      textoCompacto.includes("ANULADO")
+    ) &&
+    (
+      textoCompacto.includes("NRECIBO") ||
+      textoCompacto.includes("NORECIBO")
+    ) &&
+    (
+      textoCompacto.includes("PRIMANETA") ||
+      textoCompacto.includes("TOTALPRIMA")
+    );
+
+  console.log(
+    "SUBTIPO VIDA DETECTADO:",
+    esVidaInversion
+      ? "VIDA_INVERSION"
+      : "VIDA_NORMAL"
+  );
 
   /* =====================================================
      PRIORIDAD 1 — NOMBRE DE ARCHIVO
   ===================================================== */
 
   if (nombre.includes("VIDA")) {
-    return "MAPFRE_VIDA";
+    return {
+      tipoFactura: "MAPFRE_VIDA",
+      subtipoFactura: esVidaInversion
+        ? "VIDA_INVERSION"
+        : "VIDA_NORMAL",
+    };
   }
 
   if (
     nombre.includes("ESPANA") ||
     nombre.includes("ESP")
   ) {
-    return "MAPFRE_ESPANA";
+    return {
+      tipoFactura: "MAPFRE_ESPANA",
+    };
   }
 
   /* =====================================================
-     PRIORIDAD 2 — SI NO HAY TEXTO, NO USAR GOOGLE OCR
-     Python será quien procese el PDF
+     PRIORIDAD 2 — SI NO HAY TEXTO
   ===================================================== */
 
   if (!text || text.trim().length < 50) {
     console.log("🐍 Texto insuficiente → procesará Python");
-    return "MAPFRE_ESPANA";
+
+    return {
+      tipoFactura: "MAPFRE_ESPANA",
+    };
   }
 
   /* =====================================================
@@ -54,11 +110,18 @@ export const detectarTipoFactura = (
   ===================================================== */
 
   if (normalizado.includes("A28229599")) {
-    return "MAPFRE_VIDA";
+    return {
+      tipoFactura: "MAPFRE_VIDA",
+      subtipoFactura: esVidaInversion
+        ? "VIDA_INVERSION"
+        : "VIDA_NORMAL",
+    };
   }
 
   if (normalizado.includes("A28141935")) {
-    return "MAPFRE_ESPANA";
+    return {
+      tipoFactura: "MAPFRE_ESPANA",
+    };
   }
 
   /* =====================================================
@@ -67,23 +130,39 @@ export const detectarTipoFactura = (
 
   if (
     normalizado.includes("MAPFREVIDA") ||
-    (normalizado.includes("MAPFRE") && normalizado.includes("VIDA"))
+    (
+      normalizado.includes("MAPFRE") &&
+      normalizado.includes("VIDA")
+    )
   ) {
-    return "MAPFRE_VIDA";
+    return {
+      tipoFactura: "MAPFRE_VIDA",
+      subtipoFactura: esVidaInversion
+        ? "VIDA_INVERSION"
+        : "VIDA_NORMAL",
+    };
   }
 
   if (
     normalizado.includes("MAPFREESPANA") ||
     normalizado.includes("MAPFREESPA") ||
-    (normalizado.includes("MAPFRE") && normalizado.includes("ESPA"))
+    (
+      normalizado.includes("MAPFRE") &&
+      normalizado.includes("ESPA")
+    )
   ) {
-    return "MAPFRE_ESPANA";
+    return {
+      tipoFactura: "MAPFRE_ESPANA",
+    };
   }
 
   /* =====================================================
-     ÚLTIMO FALLBACK — PYTHON
+     ÚLTIMO FALLBACK
   ===================================================== */
 
   console.log("🐍 Tipo no claro → procesará Python");
-  return "MAPFRE_ESPANA";
+
+  return {
+    tipoFactura: "MAPFRE_ESPANA",
+  };
 };

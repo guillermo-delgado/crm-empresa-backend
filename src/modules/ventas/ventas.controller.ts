@@ -4,6 +4,28 @@ import Solicitud from "../../models/Solicitud";
 import mongoose from "mongoose";
 import User from "../../models/User";
 import { getIO } from "../../socket";
+import {
+  decryptBuffer,
+  encryptBuffer,
+  encryptJson,
+} from "../../services/cryptoService";
+
+const getUploadedFiles = (req: Request): Express.Multer.File[] => {
+  if (!req.files) return [];
+  if (Array.isArray(req.files)) return req.files;
+
+  return Object.values(req.files).flat();
+};
+
+const crearAdjuntosCifrados = (req: Request) => {
+  return getUploadedFiles(req).map((file) => ({
+    campo: file.fieldname,
+    nombreOriginal: file.originalname,
+    mimeType: file.mimetype,
+    size: file.size,
+    contenidoCifrado: encryptBuffer(file.buffer),
+  }));
+};
 
 /* =========================
    CREAR VENTA
@@ -62,6 +84,8 @@ export const crearVenta = async (req: Request, res: Response) => {
   actividad,
   observaciones,
   createdBy: new mongoose.Types.ObjectId(usuarioAsignadoId),
+  formularioCifrado: encryptJson(req.body),
+  adjuntos: crearAdjuntosCifrados(req),
 
   // ⛔ SOLO ADMIN puede fijar createdAt (ventas históricas)
   ...(createdAt && req.user.role === "admin"
@@ -85,6 +109,7 @@ export const crearVenta = async (req: Request, res: Response) => {
 /* =========================
    LIBRO DE VENTAS  ✅ (NO SE TOCA)
 ========================= */
+
 export const libroVentas = async (req: Request, res: Response) => {
   try {
     if (!req.user) {
@@ -95,12 +120,20 @@ export const libroVentas = async (req: Request, res: Response) => {
     const year = Number(req.query.year);
 
     const diaHasta = req.query.diaHasta
-  ? Number(req.query.diaHasta)
-  : null;
+      ? Number(req.query.diaHasta)
+      : null;
 
+    // El administrador puede elegir el criterio.
+    // Los empleados siempre trabajan por fecha de efecto.
+    const modoFecha =
+  req.query.modoFecha === "venta"
+    ? "venta"
+    : "efecto";
 
     if (!month || !year) {
-      return res.status(400).json({ message: "Mes y año obligatorios" });
+      return res.status(400).json({
+        message: "Mes y año obligatorios",
+      });
     }
 
     const requestedDate = new Date(year, month - 1, 1);
@@ -110,7 +143,10 @@ export const libroVentas = async (req: Request, res: Response) => {
       (requestedDate.getFullYear() - now.getFullYear()) * 12 +
       (requestedDate.getMonth() - now.getMonth());
 
-    if (req.user.role !== "admin" && (diffMonths < 0 || diffMonths > 2)) {
+    if (
+      req.user.role !== "admin" &&
+      (diffMonths < 0 || diffMonths > 2)
+    ) {
       return res.status(403).json({
         message: "No puedes consultar ventas de ese periodo",
       });
@@ -118,32 +154,54 @@ export const libroVentas = async (req: Request, res: Response) => {
 
     const start = new Date(year, month - 1, 1);
 
-const lastDayOfMonth = new Date(year, month, 0).getDate();
+    const lastDayOfMonth = new Date(
+      year,
+      month,
+      0
+    ).getDate();
 
-const end = new Date(
-  year,
-  month - 1,
-  diaHasta && diaHasta <= lastDayOfMonth
-    ? diaHasta
-    : lastDayOfMonth,
-  23,
-  59,
-  59
-);
+    const end = new Date(
+      year,
+      month - 1,
+      diaHasta && diaHasta <= lastDayOfMonth
+        ? diaHasta
+        : lastDayOfMonth,
+      23,
+      59,
+      59
+    );
 
+    // Admin:
+    //   venta  -> createdAt
+    //   efecto -> fechaEfecto
+    //
+    // Empleado:
+    //   siempre fechaEfecto
+    const campoFecha =
+      modoFecha === "venta"
+        ? "createdAt"
+        : "fechaEfecto";
 
     const filtro: any = {
-      fechaEfecto: { $gte: start, $lte: end },
+      [campoFecha]: {
+        $gte: start,
+        $lte: end,
+      },
     };
 
+    // Los empleados solo pueden ver sus propias ventas.
     if (req.user.role !== "admin") {
       filtro.createdBy = req.user.id;
     }
 
-    const ventas = await Venta.find(filtro).populate(
-      "createdBy",
-      "nombre email numma"
-    );
+    const ventas = await Venta.find(filtro)
+      .select(
+        "-formularioCifrado -adjuntos.contenidoCifrado"
+      )
+      .populate(
+        "createdBy",
+        "nombre email numma"
+      );
 
     const primaTotal = ventas.reduce(
       (acc, v) => acc + v.primaNeta,
@@ -152,12 +210,20 @@ const end = new Date(
 
     res.json({
       periodo: `${month}/${year}`,
-      resumen: { primaTotal },
+      resumen: {
+        primaTotal,
+      },
       ventas,
     });
   } catch (error) {
-    console.error("LIBRO VENTAS ERROR:", error);
-    res.status(500).json({ message: "Error obteniendo libro de ventas" });
+    console.error(
+      "LIBRO VENTAS ERROR:",
+      error
+    );
+
+    res.status(500).json({
+      message: "Error obteniendo libro de ventas",
+    });
   }
 };
 
@@ -178,9 +244,15 @@ export const obtenerKPIsVentas = async (req: Request, res: Response) => {
     const ramo = req.query.ramo as string;
     const usuario = req.query.usuario as string;
     const diaHasta = req.query.diaHasta
-  ? Number(req.query.diaHasta)
-  : null;
+      ? Number(req.query.diaHasta)
+      : null;
 
+    // El administrador puede alternar entre fecha de efecto y fecha real de registro.
+    // Los empleados mantienen el criterio de fecha de efecto.
+    const modoFecha =
+      user.role === "admin" && req.query.modoFecha === "venta"
+        ? "venta"
+        : "efecto";
 
     if (!mes || !anio) {
       return res.status(400).json({ message: "Mes y año obligatorios" });
@@ -219,8 +291,10 @@ const endPrevio = new Date(
 );
 
     const baseFiltro = (start: Date, end: Date) => {
+      const campoFecha = modoFecha === "venta" ? "createdAt" : "fechaEfecto";
+
       const f: any = {
-        fechaEfecto: { $gte: start, $lte: end },
+        [campoFecha]: { $gte: start, $lte: end },
       };
 
       // 👤 EMPLEADO → SOLO SUS VENTAS
@@ -484,6 +558,16 @@ if (documentoFiscal !== undefined) {
     if (formaPago) update.formaPago = formaPago;
     if (actividad) update.actividad = actividad;
     if (observaciones !== undefined) update.observaciones = observaciones;
+    update.formularioCifrado = encryptJson(req.body);
+
+    const adjuntosCifrados = crearAdjuntosCifrados(req);
+    if (adjuntosCifrados.length > 0) {
+      update.$push = {
+        adjuntos: {
+          $each: adjuntosCifrados,
+        },
+      };
+    }
 
     const venta = await Venta.findByIdAndUpdate(
       id,
@@ -586,7 +670,8 @@ export const obtenerVentaPorId = async (req: any, res: any) => {
     const { id } = req.params;
 
     const venta = await Venta.findById(id)
-  .populate("createdBy", "numma nombre email");
+      .select("-formularioCifrado -adjuntos.contenidoCifrado")
+      .populate("createdBy", "numma nombre email");
 
 
     if (!venta) {
@@ -597,6 +682,53 @@ export const obtenerVentaPorId = async (req: any, res: any) => {
   } catch (error) {
     console.error("❌ Error obteniendo venta por id:", error);
     res.status(500).json({ message: "Error obteniendo la venta" });
+  }
+};
+
+export const descargarAdjuntoVenta = async (req: Request, res: Response) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ message: "No autenticado" });
+    }
+
+    const { id, adjuntoId } = req.params;
+    const venta: any = await Venta.findById(id);
+
+    if (!venta) {
+      return res.status(404).json({ message: "Venta no encontrada" });
+    }
+
+    if (
+      req.user.role !== "admin" &&
+      venta.createdBy?.toString() !== req.user.id
+    ) {
+      return res.status(403).json({ message: "No autorizado" });
+    }
+
+    const adjunto = venta.adjuntos?.find(
+      (item: any) => item._id?.toString() === adjuntoId
+    );
+
+    if (!adjunto) {
+      return res.status(404).json({ message: "Adjunto no encontrado" });
+    }
+
+    const buffer = decryptBuffer(
+  adjunto.contenidoCifrado as any
+);
+    const filename = encodeURIComponent(adjunto.nombreOriginal);
+
+    res.setHeader("Content-Type", adjunto.mimeType);
+    res.setHeader("Content-Length", buffer.length);
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename*=UTF-8''${filename}`
+    );
+
+    return res.send(buffer);
+  } catch (error) {
+    console.error("DESCARGAR ADJUNTO VENTA ERROR:", error);
+    return res.status(500).json({ message: "Error descargando adjunto" });
   }
 };
 
@@ -733,6 +865,7 @@ export const buscarVentas = async (req: Request, res: Response) => {
     }
 
     const ventas = await Venta.find(filtro)
+      .select("-formularioCifrado -adjuntos.contenidoCifrado")
       .sort({ fechaEfecto: -1 })
       .limit(50)
       .populate("createdBy", "nombre email numma");

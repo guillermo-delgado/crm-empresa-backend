@@ -46,23 +46,11 @@ export const procesarFactura = async (
     /* 2️⃣ Generar hash */
     const hash = generarHash(req.file.buffer);
 
-    /* 3️⃣ Verificar duplicado */
-    const existente = await FacturacionModel.findOne({
-      "archivo.hash": hash,
-      usuarioId,
-    });
-
-    if (existente) {
-      return res.status(400).json({
-        error: "Esta factura ya fue subida anteriormente",
-      });
-    }
-
-    /* 4️⃣ Guardar hash para service */
+    /* 3️⃣ Guardar hash para service */
     (req as any).fileHash = hash;
 
     /* =====================================================
-       5️⃣ PYTHON COMO MOTOR PRINCIPAL — SIN ARCHIVO TEMPORAL
+       4️⃣ PYTHON COMO MOTOR PRINCIPAL — SIN ARCHIVO TEMPORAL
     ===================================================== */
 
     let text = "";
@@ -77,8 +65,10 @@ export const procesarFactura = async (
           const io = req.app.get("io");
 
           if (!io) return;
-console.log("📡 EMITIENDO PROGRESO FACTURA:", progreso);
-console.log("📡 ROOM:", `user:${usuarioId}`);
+
+          console.log("📡 EMITIENDO PROGRESO FACTURA:", progreso);
+          console.log("📡 ROOM:", `user:${usuarioId}`);
+
           io.to(`user:${usuarioId}`).emit("factura_progreso", {
             porcentaje: progreso.porcentaje,
             texto: progreso.texto,
@@ -93,34 +83,46 @@ console.log("📡 ROOM:", `user:${usuarioId}`);
 
         text = resultadoPython.text || "";
         usadoOCR = false;
+
       } else {
-        console.log("⚠️ Python no devolvió resultado válido. Intentando fallback TypeScript...");
+
+        console.log(
+          "⚠️ Python no devolvió resultado válido. Intentando fallback TypeScript..."
+        );
       }
 
     } catch (error) {
+
       console.log("❌ Error en Python principal:", error);
       console.log("⚠️ Intentando fallback TypeScript...");
     }
 
     /* =====================================================
-       6️⃣ FALLBACK TYPESCRIPT — SOLO SI PYTHON FALLA
+       5️⃣ FALLBACK TYPESCRIPT — SOLO SI PYTHON FALLA
        Google OCR eliminado
     ===================================================== */
 
     if (!text || text.trim().length < 50) {
+
       try {
+
         text = await extraerTextoPDF(req.file.buffer);
+
         usadoOCR = false;
 
         console.log("⚠️ Fallback TypeScript usado");
+
       } catch (err) {
+
         console.log("❌ Error en fallback TypeScript:", err);
       }
     }
 
     if (!text || text.trim().length < 50) {
+
       return res.status(400).json({
-        error: "No se pudo extraer texto válido del PDF con Python ni con fallback TypeScript.",
+        error:
+          "No se pudo extraer texto válido del PDF con Python ni con fallback TypeScript.",
       });
     }
 
@@ -138,27 +140,34 @@ console.log("📡 ROOM:", `user:${usuarioId}`);
       .trim();
 
     if (!text || text.trim().length === 0) {
+
       return res.status(400).json({
         error: "No se pudo extraer texto del PDF.",
       });
     }
 
     /* =====================================================
-       7️⃣ Detectar tipo
+       6️⃣ Detectar tipo
     ===================================================== */
 
-    const tipo = detectarTipoFactura(
-      text,
-      req.file.originalname
-    );
+    const deteccion = detectarTipoFactura(
+  text,
+  req.file.originalname
+);
 
-    console.log("TIPO DETECTADO:", tipo);
+console.log("TIPO DETECTADO:", deteccion);
+
+const tipo = deteccion.tipoFactura;
+const subtipoFactura = deteccion.subtipoFactura;
+
+(req as any).subtipoFactura = subtipoFactura;
 
     /* =====================================================
-       8️⃣ Enrutar
+       7️⃣ Enrutar
     ===================================================== */
 
     switch (tipo) {
+
       case "MAPFRE_VIDA":
         console.log("🟢 DETECTADO MAPFRE VIDA");
         return procesarMapfreVidaService(text, req, res);
@@ -174,6 +183,7 @@ console.log("📡 ROOM:", `user:${usuarioId}`);
     }
 
   } catch (error) {
+
     console.error("🔥 Error procesando factura:", error);
 
     return res.status(500).json({

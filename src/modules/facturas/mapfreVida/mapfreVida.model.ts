@@ -1,209 +1,220 @@
-import mongoose, {
-  Schema,
-  Model,
-  HydratedDocument,
-  Types,
-} from "mongoose";
+import mongoose, { Schema, Document } from "mongoose";
 
-/* =====================================================
-   TYPES
-===================================================== */
+export interface IFacturaComisionVida extends Document {
+  usuarioId: mongoose.Types.ObjectId;
 
-export interface IFactura {
-  numero?: string;
-  fecha?: string;
+  tipoFactura: "MAPFRE_VIDA";
+subtipo?: "VIDA_NORMAL" | "VIDA_INVERSION";
+
+  numeroFactura: string;
+  fechaTexto?: string;
+  fechaFactura?: Date;
   periodo?: string;
+
   razonSocial?: string;
   cif?: string;
-}
-
-export interface IResumen {
-  abonos: number;
-  extornos: number;
-  base: number;
-  irpf: number;
-  compensaciones: number;
-  otrosGastos: number;
-
-  incentivos?: number;
-  rappeles?: number;
-  otrasContraprestaciones?: number;
-  traspaso?: number;
-  comisionesNoSeguro?: number;
-  operacionesBancarias?: number;
-  ivaOperaciones?: number;
-  lineasDelegadas?: number;
-
-  liquidoCalculado: number;
-  liquidoOficial?: number | null;
-  liquidoFinal: number;
-  diferencia: number;
 
   nuevaProduccion?: number;
   renovaciones?: number;
-}
+  provisiones?: number;
+totalPrima?: number;
+  filasDetectadas?: number;
 
-export interface IArchivo {
-  nombreOriginal?: string;
-  hash?: string;
-  size?: number;
+  abonos?: number;
+  extornos?: number;
+  base?: number;
+  irpf?: number;
+
+  traspaso?: number;
+  otrosGastos?: number;
+  incentivos?: number;
+  rappeles?: number;
+  otrasContraprestaciones?: number;
+
+  comisionesNoSeguro?: number;
+  lineasDelegadas?: number;
+  operacionesBancarias?: number;
+  ivaOperaciones?: number;
+
+  compensaciones?: number;
+
+  liquidoCalculado?: number;
+  liquidoOficial?: number | null;
+  liquidoFinal?: number;
+
+  diferencia?: number;
+  usandoLiquidoOficial?: boolean;
+
+  nombreArchivoOriginal?: string;
+  urlS3?: string;
   s3Key?: string;
-}
+  jsonS3Key?: string;
 
-export interface IFacturacion {
-  usuarioId: Types.ObjectId;
-  tipo: string;
+  jsonEncrypted?: boolean;
+  jsonEncryptionVersion?: number;
 
-  factura: IFactura;
-  resumen: IResumen;
+  archivoHash?: string;
 
-  lineas: unknown[];
-
-  archivo: IArchivo;
+  sePuedeGuardar?: boolean;
+  validado?: boolean;
 
   logs?: string[];
 
-  sePuedeGuardar: boolean;
-  usandoLiquidoOficial?: boolean;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
-export type FacturacionDocument = HydratedDocument<IFacturacion>;
+const FacturaComisionVidaSchema =
+  new Schema<IFacturaComisionVida>(
+    {
+      usuarioId: {
+        type: Schema.Types.ObjectId,
+        required: true,
+        ref: "User",
+        index: true,
+      },
 
-/* =====================================================
-   SUBSCHEMAS
-===================================================== */
+      tipoFactura: {
+  type: String,
+  enum: ["MAPFRE_VIDA"],
+  default: "MAPFRE_VIDA",
+  required: true,
+  index: true,
+},
 
-const FacturaSchema = new Schema<IFactura>(
+subtipo: {
+  type: String,
+  enum: ["VIDA_NORMAL", "VIDA_INVERSION"],
+  default: "VIDA_NORMAL",
+  index: true,
+},
+
+      numeroFactura: {
+        type: String,
+        required: true,
+        index: true,
+      },
+
+      fechaTexto: { type: String },
+
+      fechaFactura: {
+        type: Date,
+        index: true,
+      },
+
+      periodo: {
+        type: String,
+        index: true,
+      },
+
+      razonSocial: { type: String },
+      cif: { type: String },
+
+      nuevaProduccion: { type: Number },
+      renovaciones: { type: Number },
+      provisiones: { type: Number },
+totalPrima: { type: Number },
+      filasDetectadas: { type: Number },
+
+      abonos: { type: Number },
+      extornos: { type: Number },
+      base: { type: Number },
+      irpf: { type: Number },
+
+      traspaso: { type: Number },
+      otrosGastos: { type: Number },
+      incentivos: { type: Number },
+      rappeles: { type: Number },
+      otrasContraprestaciones: { type: Number },
+
+      comisionesNoSeguro: { type: Number },
+      lineasDelegadas: { type: Number },
+      operacionesBancarias: { type: Number },
+      ivaOperaciones: { type: Number },
+
+      compensaciones: { type: Number },
+
+      liquidoCalculado: { type: Number },
+      liquidoOficial: { type: Number },
+      liquidoFinal: { type: Number },
+
+      diferencia: { type: Number },
+
+      usandoLiquidoOficial: {
+        type: Boolean,
+        default: false,
+      },
+
+      nombreArchivoOriginal: { type: String },
+
+      urlS3: { type: String },
+
+      s3Key: { type: String },
+
+      jsonS3Key: { type: String },
+
+      jsonEncrypted: {
+        type: Boolean,
+        default: false,
+      },
+
+      jsonEncryptionVersion: {
+        type: Number,
+      },
+
+      archivoHash: {
+        type: String,
+        index: true,
+      },
+
+      sePuedeGuardar: {
+        type: Boolean,
+        default: true,
+      },
+
+      validado: {
+        type: Boolean,
+        default: false,
+      },
+
+      logs: {
+        type: [String],
+        default: [],
+      },
+    },
+    {
+      timestamps: true,
+    }
+  );
+
+FacturaComisionVidaSchema.index(
   {
-    numero: { type: String, index: true },
-    fecha: String,
-    periodo: { type: String, index: true },
-    razonSocial: String,
-    cif: String,
+    usuarioId: 1,
+    numeroFactura: 1,
   },
-  { _id: false }
+  {
+    unique: true,
+  }
 );
 
-const ResumenSchema = new Schema<IResumen>(
-  {
-    abonos: { type: Number, default: 0 },
-    extornos: { type: Number, default: 0 },
-    base: { type: Number, default: 0 },
-    irpf: { type: Number, default: 0 },
-    compensaciones: { type: Number, default: 0 },
-    otrosGastos: { type: Number, default: 0 },
-
-    incentivos: { type: Number, default: 0 },
-    rappeles: { type: Number, default: 0 },
-    otrasContraprestaciones: { type: Number, default: 0 },
-    traspaso: { type: Number, default: 0 },
-    comisionesNoSeguro: { type: Number, default: 0 },
-    operacionesBancarias: { type: Number, default: 0 },
-    ivaOperaciones: { type: Number, default: 0 },
-    lineasDelegadas: { type: Number, default: 0 },
-
-    liquidoCalculado: { type: Number, default: 0 },
-    liquidoOficial: { type: Number, default: null },
-    liquidoFinal: { type: Number, default: 0 },
-    diferencia: { type: Number, default: 0 },
-
-    nuevaProduccion: { type: Number, default: 0 },
-    renovaciones: { type: Number, default: 0 },
-  },
-  { _id: false }
-);
-
-const ArchivoSchema = new Schema<IArchivo>(
-  {
-    nombreOriginal: String,
-    hash: { type: String, index: true },
-    size: Number,
-    s3Key: String,
-  },
-  { _id: false }
-);
-
-/* =====================================================
-   MAIN SCHEMA
-===================================================== */
-
-const FacturacionSchema = new Schema<IFacturacion>(
-  {
-    usuarioId: {
-      type: Schema.Types.ObjectId,
-      required: true,
-      ref: "User",
-      index: true,
-    },
-
-    tipo: {
-      type: String,
-      required: true,
-      index: true,
-    },
-
-    factura: {
-      type: FacturaSchema,
-      required: true,
-    },
-
-    resumen: {
-      type: ResumenSchema,
-      required: true,
-    },
-
-    lineas: {
-      type: [Schema.Types.Mixed],
-      default: [],
-    },
-
-    archivo: {
-      type: ArchivoSchema,
-      required: true,
-    },
-
-    logs: {
-      type: [String],
-      default: [],
-    },
-
-    sePuedeGuardar: {
-      type: Boolean,
-      default: true,
-    },
-
-    usandoLiquidoOficial: {
-      type: Boolean,
-      default: false,
-    },
-  },
-  { timestamps: true }
-);
-
-/* =====================================================
-   ÍNDICES
-===================================================== */
-
-FacturacionSchema.index({
+FacturaComisionVidaSchema.index({
   usuarioId: 1,
-  "factura.numero": 1,
-  tipo: 1,
+  tipoFactura: 1,
+  periodo: 1,
 });
 
-FacturacionSchema.index({
+FacturaComisionVidaSchema.index({
   usuarioId: 1,
-  "factura.periodo": 1,
-  tipo: 1,
+  tipoFactura: 1,
+  archivoHash: 1,
 });
 
-/* =====================================================
-   EXPORT
-===================================================== */
+const FacturacionVidaModel =
+  mongoose.models.FacturaComision ||
+  mongoose.model<IFacturaComisionVida>(
+    "FacturaComision",
+    FacturaComisionVidaSchema,
+    "facturacion"
+  );
 
-const FacturacionModel = mongoose.model<IFacturacion>(
-  "Facturacion",
-  FacturacionSchema,
-  "facturacion"
-);
-
-export default FacturacionModel;
+export default FacturacionVidaModel;
