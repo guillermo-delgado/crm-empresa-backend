@@ -84,7 +84,9 @@ export const crearVenta = async (req: Request, res: Response) => {
   actividad,
   observaciones,
   createdBy: new mongoose.Types.ObjectId(usuarioAsignadoId),
-  formularioCifrado: encryptJson(req.body),
+  formularioCifrado: JSON.parse(
+  encryptJson(req.body).toString("utf8")
+),
   adjuntos: crearAdjuntosCifrados(req),
 
   // ⛔ SOLO ADMIN puede fijar createdAt (ventas históricas)
@@ -100,10 +102,52 @@ export const crearVenta = async (req: Request, res: Response) => {
     } catch {}
 
     res.status(201).json(venta);
-  } catch (error) {
-    console.error("CREAR VENTA ERROR:", error);
-    res.status(500).json({ message: "Error al guardar la venta" });
+  } catch (error: any) {
+  console.error("CREAR VENTA ERROR:", error);
+
+  // 🔴 PÓLIZA DUPLICADA
+  if (error?.code === 11000 && error?.keyPattern?.numeroPoliza) {
+    return res.status(409).json({
+      code: "DUPLICATE_POLICY",
+      message: `El número de póliza ${req.body.numeroPoliza} ya existe.`,
+    });
   }
+
+  // 🟠 ERROR DE VALIDACIÓN
+  if (error?.name === "ValidationError") {
+    const errores = Object.values(error.errors || {})
+      .map((e: any) => e.message)
+      .filter(Boolean);
+
+    return res.status(400).json({
+      code: "VALIDATION_ERROR",
+      message:
+        errores.length > 0
+          ? errores.join(" ")
+          : "Los datos introducidos no son válidos.",
+    });
+  }
+
+  // 🔴 ERROR DE BASE DE DATOS
+  if (
+    error?.name === "MongoServerError" ||
+    error?.name === "MongoNetworkError" ||
+    error?.name === "MongoServerSelectionError" ||
+    error?.name === "MongoTimeoutError" ||
+    error?.codeName === "HostUnreachable"
+  ) {
+    return res.status(503).json({
+      code: "DATABASE_ERROR",
+      message: "No se ha podido acceder a la base de datos. La venta no se ha guardado.",
+    });
+  }
+
+  // 🔴 ERROR INTERNO
+  return res.status(500).json({
+    code: "INTERNAL_ERROR",
+    message: "Se ha producido un error interno. La venta no se ha guardado.",
+  });
+}
 };
 
 /* =========================
@@ -558,7 +602,9 @@ if (documentoFiscal !== undefined) {
     if (formaPago) update.formaPago = formaPago;
     if (actividad) update.actividad = actividad;
     if (observaciones !== undefined) update.observaciones = observaciones;
-    update.formularioCifrado = encryptJson(req.body);
+    update.formularioCifrado = JSON.parse(
+  encryptJson(req.body).toString("utf8")
+);
 
     const adjuntosCifrados = crearAdjuntosCifrados(req);
     if (adjuntosCifrados.length > 0) {
@@ -588,11 +634,53 @@ if (documentoFiscal !== undefined) {
 res.json(venta);
 
   } catch (error: any) {
-    console.error("EDITAR VENTA ERROR:", error.message);
-    res.status(400).json({
-      message: error.message || "Datos inválidos",
+  console.error("EDITAR VENTA ERROR:", error);
+
+  // 🔴 PÓLIZA DUPLICADA
+  if (error?.code === 11000 && error?.keyPattern?.numeroPoliza) {
+    return res.status(409).json({
+      code: "DUPLICATE_POLICY",
+      message: `El número de póliza ${req.body.numeroPoliza} ya existe.`,
     });
   }
+
+  // 🟠 ERROR DE VALIDACIÓN
+  if (error?.name === "ValidationError") {
+    const errores = Object.values(error.errors || {})
+      .map((e: any) => e.message)
+      .filter(Boolean);
+
+    return res.status(400).json({
+      code: "VALIDATION_ERROR",
+      message:
+        errores.length > 0
+          ? errores.join(" ")
+          : "Los datos introducidos no son válidos.",
+    });
+  }
+
+  // 🔴 ERROR DE BASE DE DATOS
+  if (
+    error?.name === "MongoServerError" ||
+    error?.name === "MongoNetworkError" ||
+    error?.name === "MongoServerSelectionError" ||
+    error?.name === "MongoTimeoutError" ||
+    error?.codeName === "HostUnreachable"
+  ) {
+    return res.status(503).json({
+      code: "DATABASE_ERROR",
+      message:
+        "No se ha podido acceder a la base de datos. La venta no se ha guardado.",
+    });
+  }
+
+  // 🔴 ERROR INTERNO
+  return res.status(500).json({
+    code: "INTERNAL_ERROR",
+    message:
+      "Se ha producido un error interno. La venta no se ha guardado.",
+  });
+}
 };
 
 /* =========================
