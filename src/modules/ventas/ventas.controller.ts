@@ -1,4 +1,5 @@
 import { Request, Response } from "express";
+import { spawn } from "child_process";
 import Venta from "../../models/Venta";
 import Solicitud from "../../models/Solicitud";
 import mongoose from "mongoose";
@@ -9,6 +10,97 @@ import {
   encryptBuffer,
   encryptJson,
 } from "../../services/cryptoService";
+
+const ejecutarExtractorPython = (
+  contenido: Buffer,
+  mimeType: string
+): Promise<any> => {
+  return new Promise((resolve, reject) => {
+    const pythonExecutable =
+      process.platform === "win32"
+        ? `${process.cwd()}\\.venv\\Scripts\\python.exe`
+        : `${process.cwd()}/.venv/bin/python`;
+
+    const codigoPython = `
+import sys
+import json
+import base64
+
+sys.stdin.reconfigure(encoding="utf-8")
+sys.stdout.reconfigure(encoding="utf-8")
+
+from python.polizaExtractor import analizar_poliza
+
+entrada = json.load(sys.stdin)
+contenido = base64.b64decode(entrada["contenido"])
+resultado = analizar_poliza(
+    contenido,
+    entrada.get("mimeType", "application/pdf")
+)
+print(json.dumps(resultado, ensure_ascii=False))
+`;
+
+    const proceso = spawn(
+      pythonExecutable,
+      ["-c", codigoPython],
+      {
+        cwd: process.cwd(),
+        windowsHide: true,
+      }
+    );
+
+    let stdout = "";
+    let stderr = "";
+
+    proceso.stdout.on("data", (data) => {
+      stdout += data.toString();
+    });
+
+    proceso.stderr.on("data", (data) => {
+      stderr += data.toString();
+    });
+
+    proceso.on("error", (error) => {
+      reject(
+        new Error(
+          `No se ha podido iniciar el extractor Python: ${error.message}`
+        )
+      );
+    });
+
+    proceso.on("close", (code) => {
+      if (code !== 0) {
+        reject(
+          new Error(
+            stderr.trim() ||
+              "El extractor Python no ha podido analizar la póliza."
+          )
+        );
+        return;
+      }
+
+      try {
+        resolve(JSON.parse(stdout));
+      } catch {
+        reject(
+          new Error(
+            "El extractor Python devolvió una respuesta no válida."
+          )
+        );
+      }
+    });
+
+    proceso.stdin.write(
+      JSON.stringify({
+        mimeType,
+        contenido: contenido.toString("base64"),
+      })
+    );
+
+    proceso.stdin.end();
+  });
+};
+
 
 const getUploadedFiles = (req: Request): Express.Multer.File[] => {
   if (!req.files) return [];
@@ -51,27 +143,67 @@ export const crearVenta = async (req: Request, res: Response) => {
       createdAt,
     } = req.body;
 
-    let usuarioAsignadoId = req.user.id;
+   let usuarioAsignadoId: string;
 
-    // 🔐 SOLO ADMIN puede asignar ventas a otros
-    if (createdBy && req.user.role === "admin") {
-      const usuario = await User.findOne({
-        $or: [
-          { numma: createdBy },
-          { email: createdBy },
-          { nombre: createdBy },
-        ],
-      });
+// 👤 EMPLEADO → SIEMPRE se asigna a sí mismo
+if (req.user.role !== "admin") {
+  if (!req.user.id || !mongoose.isValidObjectId(req.user.id)) {
+    return res.status(400).json({
+      code: "INVALID_USER",
+      message: "No se ha podido identificar al usuario que registra la venta.",
+    });
+  }
 
-      if (!usuario) {
-        return res.status(400).json({
-          message: "Usuario no válido para asignar la venta",
-        });
-      }
+  const usuarioActual = await User.findById(req.user.id).select("_id");
 
-      usuarioAsignadoId = usuario._id.toString();
-    }
+  if (!usuarioActual) {
+    return res.status(400).json({
+      code: "INVALID_USER",
+      message: "El usuario que registra la venta no existe.",
+    });
+  }
 
+  usuarioAsignadoId = usuarioActual._id.toString();
+}
+
+// 👑 ADMIN → DEBE indicar obligatoriamente el usuario
+else {
+  if (!createdBy || String(createdBy).trim() === "") {
+    return res.status(400).json({
+      code: "USER_REQUIRED",
+      message: "Debes asignar la venta a un usuario.",
+    });
+  }
+
+  const valorCreatedBy = String(createdBy).trim();
+
+  let usuarioAsignado = null;
+
+  // Si viene como ObjectId
+  if (mongoose.isValidObjectId(valorCreatedBy)) {
+    usuarioAsignado = await User.findById(valorCreatedBy);
+  }
+
+  // Si no es ObjectId, buscamos por numma, email o nombre
+  if (!usuarioAsignado) {
+    usuarioAsignado = await User.findOne({
+      $or: [
+        { numma: valorCreatedBy },
+        { email: valorCreatedBy },
+        { nombre: valorCreatedBy },
+      ],
+    });
+  }
+
+  if (!usuarioAsignado) {
+    return res.status(400).json({
+      code: "INVALID_USER",
+      message: "El usuario seleccionado no existe.",
+    });
+  }
+
+  usuarioAsignadoId = usuarioAsignado._id.toString();
+}
   const venta = await Venta.create({
   fechaEfecto,
   aseguradora,
@@ -966,6 +1098,78 @@ export const buscarVentas = async (req: Request, res: Response) => {
 };
 
 
+/* =========================
+   BUSCAR CLIENTE POR NIF
+   - Solo devuelve el nombre/tomador
+   - NO devuelve pólizas
+   - NO devuelve documentos
+   - NO devuelve datos sensibles
+========================= */
+export const buscarClientePorDocumento = async (
+  req: Request,
+  res: Response
+) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({
+        message: "No autenticado",
+      });
+    }
+
+    const documentoFiscal = String(
+      req.query.documentoFiscal || ""
+    )
+      .trim()
+      .toUpperCase();
+
+    if (!documentoFiscal) {
+      return res.json({
+        cliente: null,
+      });
+    }
+
+    if (documentoFiscal.length < 6) {
+      return res.json({
+        cliente: null,
+      });
+    }
+
+    /*
+     * Buscamos únicamente una venta que tenga
+     * ese documento fiscal.
+     *
+     * NO devolvemos la venta completa.
+     */
+    const venta = await Venta.findOne({
+  documentoFiscal,
+})
+  .select("tomador")
+  .sort({ createdAt: -1 })
+  .lean<{ tomador: string }>();
+
+    if (!venta) {
+      return res.json({
+        cliente: null,
+      });
+    }
+
+    return res.json({
+      cliente: {
+        tomador: venta.tomador,
+      },
+    });
+  } catch (error) {
+    console.error(
+      "ERROR BUSCANDO CLIENTE POR DOCUMENTO:",
+      error
+    );
+
+    return res.status(500).json({
+      message: "Error buscando cliente",
+    });
+  }
+};
+
 
 /* =========================
     SOLICITUDES EMPLEADO
@@ -1294,6 +1498,57 @@ export const obtenerVentaAdelantada = async (req: Request, res: Response) => {
 };
 
 
+/* =========================
+   ANALIZAR PÓLIZA
+   - NO SE GUARDA
+========================= */
 
+export const analizarPolizaController = async (
+  req: Request,
+  res: Response
+) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({
+        message: "No autenticado",
+      });
+    }
 
+    const file = req.file;
+
+    if (!file) {
+      return res.status(400).json({
+        message: "No se ha recibido ninguna póliza.",
+      });
+    }
+
+    if (
+      file.mimetype !== "application/pdf" &&
+      !file.originalname.toLowerCase().endsWith(".pdf")
+    ) {
+      return res.status(400).json({
+        message: "Formato no compatible. Solo se admiten archivos PDF.",
+      });
+    }
+
+    const datos = await ejecutarExtractorPython(
+      file.buffer,
+      "application/pdf"
+    );
+
+    return res.json({
+      ok: true,
+      datos,
+    });
+  } catch (error: any) {
+    console.error("ERROR ANALIZANDO POLIZA:", error);
+
+    return res.status(400).json({
+      ok: false,
+      message:
+        error?.message ||
+        "No se ha podido analizar la póliza.",
+    });
+  }
+};
 

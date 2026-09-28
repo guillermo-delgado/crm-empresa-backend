@@ -9,14 +9,16 @@ import {
   editarVenta,
   obtenerVentaPorId,
   buscarVentas,
+  buscarClientePorDocumento,
   obtenerSolicitudPendientePorVenta,
   contarRevisionesEmpleado,
   anularVenta,
   solicitarRehabilitacion,
   obtenerKPIsVentas,
   obtenerPolizasComparativa3Anios,
-  obtenerVentaAdelantada, // 🔥 NUEVO CONTROLADOR
+  obtenerVentaAdelantada,
   descargarAdjuntoVenta,
+  analizarPolizaController,
 } from "./ventas.controller";
 
 import { authMiddleware } from "../../middlewares/auth";
@@ -31,6 +33,14 @@ const uploadVentas = multer({
   limits: {
     fileSize: 15 * 1024 * 1024,
     files: 20,
+  },
+});
+
+const uploadAnalisisPoliza = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 15 * 1024 * 1024,
+    files: 1,
   },
 });
 
@@ -104,6 +114,29 @@ router.get(
   "/buscar",
   authMiddleware,
   buscarVentas
+);
+
+/* =========================
+   BUSCAR CLIENTE POR NIF
+========================= */
+router.get(
+  "/buscar-cliente",
+  authMiddleware,
+  requireJornadaActiva,
+  buscarClientePorDocumento
+);
+
+
+/* =========================
+   ANALIZAR PÓLIZA
+   - NO SE GUARDA
+========================= */
+router.post(
+  "/analizar-poliza",
+  authMiddleware,
+  requireJornadaActiva,
+  uploadAnalisisPoliza.single("poliza"),
+  analizarPolizaController
 );
 
 /* =========================
