@@ -1,6 +1,7 @@
 import { Response, NextFunction } from "express";
 import RegistroHorario from "../models/RegistroHorario";
 import IntentoFraude from "../models/IntentoFraude";
+import { hoyEspana } from "../utils/horario.utils";
 
 /**
  * 🧾 Registrar intento antifraude
@@ -82,7 +83,7 @@ if (req.user.role === "empleado" && esMovilOTablet) {
     /* =========================
        📅 Registro de HOY
     ========================= */
-    const hoy = new Date().toLocaleDateString("sv-SE"); // YYYY-MM-DD
+    const hoy = hoyEspana(); // YYYY-MM-DD (hora de España, no la del servidor)
 
 
     const registro = await RegistroHorario.findOne({

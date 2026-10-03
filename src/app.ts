@@ -5,6 +5,7 @@ import authRoutes from "./routes/auth.routes";
 import userRoutes from "./routes/user.routes";
 import ventasRoutes from "./modules/ventas/ventas.routes";
 import solicitudesRoutes from "./modules/solicitudes/solicitudes.routes";
+import sorteosRoutes from "./modules/sorteos/sorteos.routes";
 
 // ⏱️ Horario trabajador
 import horarioRoutes from "./modules/horario/horario.routes";
@@ -58,6 +59,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/ventas", ventasRoutes);
 app.use("/api/solicitudes", solicitudesRoutes);
+app.use("/api/crm/sorteos", sorteosRoutes);
 
 // 👷 Trabajador
 app.use("/api/horario", horarioRoutes);

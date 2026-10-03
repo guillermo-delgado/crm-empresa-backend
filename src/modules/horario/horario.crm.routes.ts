@@ -12,6 +12,7 @@ import {
   obtenerCalendarioGeneral,
   marcarDia,
   eliminarDia,
+  marcarDiasMasivo,
 } from "./horario.crm.controller";
 
 const router = Router();
@@ -72,5 +73,11 @@ router.post("/dia", marcarDia);
    DELETE /api/horario/crm/dia
 ========================= */
 router.delete("/dia", eliminarDia);
+
+/* =========================
+   🗓️ MARCAR / QUITAR VARIOS DÍAS A LA VEZ
+   POST /api/crm/horario/dias-masivo
+========================= */
+router.post("/dias-masivo", marcarDiasMasivo);
 
 export default router;

@@ -1,52 +1,118 @@
 import { Request, Response } from "express";
+import { isValidObjectId } from "mongoose";
 import RegistroHorario from "../../models/RegistroHorario";
 import User from "../../models/User";
+import {
+  calcularMinutosTrabajados,
+  claveFecha,
+  esFechaValida,
+  esFinDeSemana,
+  esHoraValida,
+  esMesValido,
+  horaParaMostrar,
+  minutosObjetivoDia,
+  normalizarHora,
+  rangoDelMes,
+} from "../../utils/horario.utils";
 
 type FichajeDia = {
   tipo: "ENTRADA" | "SALIDA";
   hora: string;
+  /** Motivo de una pausa (se guarda en la SALIDA que la inicia) */
+  motivo?: string;
 };
 
+const ESTADOS = ["VACACIONES", "DIA_LIBRE", "BAJA", "FESTIVO"];
+const TURNOS = ["MANANA", "TARDE", "MANANA_TARDE"];
+
+/** Valida { entrada, salida } opcional de un turno. */
+const tramoValido = (tramo: any): boolean =>
+  !tramo ||
+  ((tramo.entrada === undefined ||
+    tramo.entrada === "" ||
+    esHoraValida(tramo.entrada)) &&
+    (tramo.salida === undefined ||
+      tramo.salida === "" ||
+      esHoraValida(tramo.salida)));
 
 /* =========================
-   HELPERS
+   🏖️ LÍMITE DE VACACIONES (por año natural)
 ========================= */
+const contarVacaciones = async (
+  empleadoId: string,
+  year: string,
+  excluirFechas: string[] = []
+): Promise<number> => {
+  const rango: any = {
+    $gte: `${year}-01-01`,
+    $lte: `${year}-12-31`,
+    ...(excluirFechas.length ? { $nin: excluirFechas } : {}),
+  };
 
-const calcularMinutos = (fichajes: any[]) => {
-  const activos = fichajes
-    .filter((f) => f.activo !== false)
-    .sort(
-      (a, b) =>
-        new Date(a.hora).getTime() -
-        new Date(b.hora).getTime()
-    );
+  // Vacaciones marcadas al propio empleado
+  const propias = await RegistroHorario.countDocuments({
+    usuario: empleadoId,
+    estado: "VACACIONES",
+    fecha: rango,
+  });
 
-  let total = 0;
+  // Vacaciones generales (marcadas desde "Todos los empleados"): también
+  // se ven en su calendario, salvo que el día tenga un registro propio.
+  const generales = await RegistroHorario.find({
+    usuario: null,
+    estado: "VACACIONES",
+    fecha: rango,
+  }).select("fecha");
 
-  for (let i = 0; i < activos.length; i += 2) {
-    const entrada = activos[i];
-    const salida = activos[i + 1];
-    if (!salida) break;
+  if (generales.length === 0) return propias;
 
-    total +=
-      (new Date(salida.hora).getTime() -
-        new Date(entrada.hora).getTime()) /
-      60000;
+  const fechasGenerales = generales.map((r: any) => r.fecha);
+  const conRegistroPropio = await RegistroHorario.find({
+    usuario: empleadoId,
+    fecha: { $in: fechasGenerales },
+  }).select("fecha");
+
+  const propiasSet = new Set(conRegistroPropio.map((r: any) => r.fecha));
+  const soloGenerales = new Set(
+    fechasGenerales.filter((f: string) => !propiasSet.has(f))
+  );
+
+  return propias + soloGenerales.size;
+};
+
+/**
+ * Comprueba que marcar estas fechas como VACACIONES no supera el máximo
+ * del empleado en ningún año. Devuelve el mensaje de error o null.
+ */
+const errorLimiteVacaciones = async (
+  empleadoId: string,
+  fechas: string[]
+): Promise<string | null> => {
+  const empleado: any = await User.findById(empleadoId);
+  const max: number = empleado?.maxDiasVacaciones ?? 30;
+
+  const porAnio = new Map<string, string[]>();
+  for (const f of fechas) {
+    const y = f.slice(0, 4);
+    porAnio.set(y, [...(porAnio.get(y) ?? []), f]);
   }
 
-  return Math.round(total);
+  for (const [year, lista] of porAnio) {
+    // Los días que ya eran vacaciones no cuentan como nuevos
+    const usados = await contarVacaciones(empleadoId, year, lista);
+    if (usados + lista.length > max) {
+      const quedan = Math.max(0, max - usados);
+      return quedan === 0
+        ? `Ya tiene aplicados los ${max} días de vacaciones de ${year}`
+        : `Solo quedan ${quedan} días de vacaciones en ${year} (máximo ${max})`;
+    }
+  }
+  return null;
 };
-
-const esFinDeSemana = (fecha: string) => {
-  const d = new Date(fecha);
-  const day = d.getDay(); // 0 = domingo, 6 = sábado
-  return day === 0 || day === 6;
-};
-
 
 /* =========================
    👥 OBTENER EMPLEADOS
-   GET /api/horario/crm/empleados
+   GET /api/crm/horario/empleados
 ========================= */
 export const obtenerEmpleados = async (
   _req: Request,
@@ -67,19 +133,9 @@ export const obtenerEmpleados = async (
   }
 };
 
-
-
-const parseHora = (hora: string): number => {
-  if (!hora || !hora.includes(":")) return 0;
-  const [h, m] = hora.split(":").map(Number);
-  return h * 60 + m;
-};
-
-
-
 /* =========================
    📅 CALENDARIO CRM
-   GET /api/horario/crm?mes&empleadoId?
+   GET /api/crm/horario?mes&empleadoId?
 ========================= */
 export const obtenerCalendarioEmpleado = async (
   req: Request,
@@ -93,6 +149,16 @@ export const obtenerCalendarioEmpleado = async (
 
     if (!mes) {
       return res.status(400).json({ message: "Mes requerido" });
+    }
+
+    if (!esMesValido(mes)) {
+      return res
+        .status(400)
+        .json({ message: "Mes inválido (formato YYYY-MM)" });
+    }
+
+    if (empleadoId && !isValidObjectId(empleadoId)) {
+      return res.status(400).json({ message: "Empleado inválido" });
     }
 
     let horasContratadasSemana = 40;
@@ -110,177 +176,135 @@ export const obtenerCalendarioEmpleado = async (
       }
     }
 
-    const [y, m] = mes.split("-").map(Number);
-    const desde = `${y}-${String(m).padStart(2, "0")}-01`;
-    const hasta = `${y}-${String(m).padStart(2, "0")}-31`;
+    const { year, month, totalDias, desde, hasta } = rangoDelMes(mes);
 
     const filtro: any = {
       fecha: { $gte: desde, $lte: hasta },
     };
 
     if (empleadoId) {
-  filtro.$or = [
-    { usuario: empleadoId },
-    { usuario: null },
-    { usuario: { $exists: false } }, // ✅ CLAVE
-  ];
-}
-const registros = await RegistroHorario.find(filtro);
-const mapaRegistros = new Map<string, any>();
+      filtro.$or = [
+        { usuario: empleadoId },
+        { usuario: null },
+        { usuario: { $exists: false } },
+      ];
+    }
 
+    const registros = await RegistroHorario.find(filtro);
+    const mapaRegistros = new Map<string, any>();
 
-
-    
-
-for (const r of registros) {
-  const key = `${r.fecha}__${r.usuario ?? "GLOBAL"}`;
-  mapaRegistros.set(key, r);
-}
-
-
+    for (const r of registros) {
+      const key = `${r.fecha}__${r.usuario ?? "GLOBAL"}`;
+      mapaRegistros.set(key, r);
+    }
 
     let horasTrabajadas = 0;
     for (const r of registros) {
-  if (typeof r.minutosTrabajados === "number") {
-    horasTrabajadas += r.minutosTrabajados;
-  }
-}
+      if (
+        typeof r.minutosTrabajados === "number" &&
+        Number.isFinite(r.minutosTrabajados)
+      ) {
+        horasTrabajadas += r.minutosTrabajados;
+      }
+    }
 
+    const dias: {
+      fecha: string;
+      minutosTrabajados: number;
+      estado: "VACACIONES" | "DIA_LIBRE" | "BAJA" | "FESTIVO" | null;
+      turno: "MANANA" | "TARDE" | "MANANA_TARDE" | null;
+      esFinDeSemana: boolean;
+      fichajes: FichajeDia[];
+      horaEntradaManana: string | null;
+      horaSalidaManana: string | null;
+      horaEntradaTarde: string | null;
+      horaSalidaTarde: string | null;
+    }[] = [];
 
-const dias: {
-  fecha: string;
-  minutosTrabajados: number;
-  estado: "VACACIONES" | "DIA_LIBRE" | "BAJA" | "FESTIVO" | null;
-  turno: "MANANA" | "TARDE" | "MANANA_TARDE" | null;
-  esFinDeSemana: boolean;
+    const minutosDia = (horasContratadasSemana * 60) / 5;
+    let minutosTeoricosMes = 0;
+    // Suma de las horas de TODAS las jornadas (turnos) aplicadas en el mes
+    let minutosAplicadosMes = 0;
 
-  fichajes: FichajeDia[]; // ✅ ESTA LÍNEA ES LA CLAVE
+    for (let d = 1; d <= totalDias; d++) {
+      const fecha = claveFecha(year, month, d);
 
-  horaEntradaManana: string | null;
-  horaSalidaManana: string | null;
-  horaEntradaTarde: string | null;
-  horaSalidaTarde: string | null;
-}[] = [];
+      const keyEmpleado = `${fecha}__${empleadoId ?? "GLOBAL"}`;
+      const keyGlobal = `${fecha}__GLOBAL`;
 
+      const registro =
+        mapaRegistros.get(keyEmpleado) ??
+        mapaRegistros.get(keyGlobal) ??
+        null;
 
+      // ⏱️ Minutos reales desde fichajes (mismo cálculo que en todo el sistema)
+      const minutosTrabajados = registro?.fichajes?.length
+        ? calcularMinutosTrabajados(registro.fichajes)
+        : 0;
 
+      const fichajes: FichajeDia[] = (registro?.fichajes ?? [])
+        .filter((f: any) => f.activo !== false)
+        .map((f: any) => ({
+          tipo: f.tipo,
+          hora: horaParaMostrar(f.hora),
+          ...(f.motivo ? { motivo: String(f.motivo) } : {}),
+        }))
+        .filter(
+          (f: FichajeDia) => f.hora !== "" && f.hora !== "00:00"
+        );
 
+      // Horas teóricas del mes (como siempre)
+      let descuenta = true;
 
-const totalDiasMes = new Date(y, m, 0).getDate();
-const minutosDia = (horasContratadasSemana * 60) / 5;
-let minutosTeoricosMes = 0;
+      if (esFinDeSemana(fecha)) descuenta = false;
+      if (registro?.estado === "VACACIONES") descuenta = false;
+      if (registro?.estado === "BAJA") descuenta = false;
+      if (registro?.estado === "FESTIVO") descuenta = false;
+      if (registro?.estado === "DIA_LIBRE") descuenta = false;
 
+      if (descuenta) {
+        minutosTeoricosMes += minutosDia;
+      }
 
-for (let d = 1; d <= totalDiasMes; d++) {
-  const fecha = `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+      // Horas de la jornada aplicada ese día (si tiene turno y no es un estado)
+      if (registro?.turno && !registro?.estado) {
+        minutosAplicadosMes += minutosObjetivoDia(
+          registro,
+          null,
+          horasContratadasSemana,
+          esFinDeSemana(fecha)
+        );
+      }
 
-  const keyEmpleado = `${fecha}__${empleadoId ?? "GLOBAL"}`;
-const keyGlobal   = `${fecha}__GLOBAL`;
+      dias.push({
+        fecha,
+        minutosTrabajados,
+        estado: registro?.estado ?? null,
+        turno: registro?.turno ?? null,
+        esFinDeSemana: esFinDeSemana(fecha),
+        fichajes,
+        horaEntradaManana: registro?.horaEntradaManana ?? null,
+        horaSalidaManana: registro?.horaSalidaManana ?? null,
+        horaEntradaTarde: registro?.horaEntradaTarde ?? null,
+        horaSalidaTarde: registro?.horaSalidaTarde ?? null,
+      });
+    }
 
-const registro =
-  mapaRegistros.get(keyEmpleado) ??
-  mapaRegistros.get(keyGlobal) ??
-  null;
+    const balanceMinutos = horasTrabajadas - minutosTeoricosMes;
 
+    // 🏖️ Vacaciones ya aplicadas en el año del mes consultado
+    const diasVacacionesUsados = empleadoId
+      ? await contarVacaciones(empleadoId, String(year))
+      : 0;
 
-let estado: "VACACIONES" | "DIA_LIBRE" | "BAJA" | "FESTIVO" | null = null;
-  let minutosTrabajados = 0;
-
-//  const filtro: any = {
-//   fecha: { $gte: desde, $lte: hasta },
-// };
-
-
- let descuenta = true;
-
-if (esFinDeSemana(fecha)) descuenta = false;
-if (registro?.estado === "VACACIONES") descuenta = false;
-if (registro?.estado === "BAJA") descuenta = false;
-if (registro?.estado === "FESTIVO") descuenta = false;
-if (registro?.estado === "DIA_LIBRE") descuenta = false;
-
-if (descuenta) {
-  minutosTeoricosMes += minutosDia;
-}
-
-
-
-// ⏱️ Calcular minutos trabajados reales desde fichajes
-
-
-if (registro?.fichajes?.length) {
-  console.log("🧪 DIA USADO:", {
-    fecha,
-    usuario: registro.usuario,
-    fichajes: registro.fichajes.map((f: any) => ({
-  tipo: f.tipo,
-  hora: f.hora
-}))
-
-
-  });
-  const fichajesActivos = registro.fichajes
-  .filter((f: any) => f.activo !== false && typeof f.hora === "string")
-  .sort(
-    (a: any, b: any) => parseHora(a.hora) - parseHora(b.hora)
-  );
-
-for (let i = 0; i < fichajesActivos.length; i += 2) {
-  const entrada = fichajesActivos[i];
-  const salida = fichajesActivos[i + 1];
-
-  if (!entrada || !salida) continue;
-
-  const diff = parseHora(salida.hora) - parseHora(entrada.hora);
-  if (diff > 0) minutosTrabajados += diff;
-}
-
-}
-
-// 📅 Día final enviado al CRM
-dias.push({
-  fecha,
-  minutosTrabajados: Math.round(minutosTrabajados),
-  estado: registro?.estado ?? null,
-  turno: registro?.turno ?? null,
-  esFinDeSemana: esFinDeSemana(fecha),
-
-  // ⬇️ ESTO ES LO NUEVO (FICHAJES REALES)
- fichajes: registro?.fichajes
-  ? registro.fichajes
-      .filter((f: any) => f.activo !== false)
-      .map((f: any) => ({
-  tipo: f.tipo,
-  hora:
-    typeof f.hora === "string" && /^\d{2}:\d{2}$/.test(f.hora)
-      ? f.hora
-      : new Date(f.hora).toISOString().slice(11, 16),
-}))
-
-      .filter((f: { hora: string }) => f.hora !== "00:00")
-  : [],
-
-
-
-  // ⬇️ ESTO SE QUEDA (JORNADA TEÓRICA)
-  horaEntradaManana: registro?.horaEntradaManana ?? null,
-  horaSalidaManana: registro?.horaSalidaManana ?? null,
-  horaEntradaTarde: registro?.horaEntradaTarde ?? null,
-  horaSalidaTarde: registro?.horaSalidaTarde ?? null,
-});
-
-
-
-
-
-}
-
-const balanceMinutos = horasTrabajadas - minutosTeoricosMes;
-console.log("🟢 BACKEND DIA EJEMPLO:", dias.find(d => d.fichajes?.length));
     return res.json({
       dias,
       horasTrabajadas,
       balanceMinutos,
+      diasVacacionesUsados,
+      // Jornadas aplicadas vs horas que corresponden al mes
+      minutosAplicadosMes,
+      minutosTeoricosMes: Math.round(minutosTeoricosMes),
       horasContratadasSemana,
       maxDiasVacaciones,
     });
@@ -290,10 +314,9 @@ console.log("🟢 BACKEND DIA EJEMPLO:", dias.find(d => d.fichajes?.length));
   }
 };
 
-
 /* =========================
    ✏️ EDITAR FICHAJE
-   PUT /api/horario/crm/:registroId/fichaje/:fichajeId
+   PUT /api/crm/horario/:registroId/fichaje/:fichajeId
 ========================= */
 export const editarFichaje = async (
   req: Request,
@@ -309,9 +332,19 @@ export const editarFichaje = async (
         .json({ message: "Hora requerida" });
     }
 
-    const registro = await RegistroHorario.findById(
-      registroId
-    );
+    if (!esHoraValida(hora)) {
+      return res
+        .status(400)
+        .json({ message: "Hora inválida (formato HH:mm)" });
+    }
+
+    if (!isValidObjectId(registroId)) {
+      return res
+        .status(400)
+        .json({ message: "Registro inválido" });
+    }
+
+    const registro = await RegistroHorario.findById(registroId);
 
     if (!registro) {
       return res
@@ -319,9 +352,9 @@ export const editarFichaje = async (
         .json({ message: "Registro no encontrado" });
     }
 
-const fichaje = registro.fichajes.find(
-  (f: any) => f._id?.toString() === fichajeId
-);
+    const fichaje = registro.fichajes.find(
+      (f: any) => f._id?.toString() === fichajeId
+    );
 
     if (!fichaje || fichaje.activo === false) {
       return res
@@ -329,10 +362,9 @@ const fichaje = registro.fichajes.find(
         .json({ message: "Fichaje inválido" });
     }
 
-   fichaje.hora = hora; // "10:00"
+    fichaje.hora = normalizarHora(hora); // "10:00"
 
-
-    registro.minutosTrabajados = calcularMinutos(
+    registro.minutosTrabajados = calcularMinutosTrabajados(
       registro.fichajes
     );
     registro.corregida = true;
@@ -353,7 +385,7 @@ const fichaje = registro.fichajes.find(
 
 /* =========================
    🗑️ ELIMINAR FICHAJE (DESACTIVAR)
-   DELETE /api/horario/crm/:registroId/fichaje/:fichajeId
+   DELETE /api/crm/horario/:registroId/fichaje/:fichajeId
 ========================= */
 export const eliminarFichaje = async (
   req: Request,
@@ -362,9 +394,13 @@ export const eliminarFichaje = async (
   try {
     const { registroId, fichajeId } = req.params;
 
-    const registro = await RegistroHorario.findById(
-      registroId
-    );
+    if (!isValidObjectId(registroId)) {
+      return res
+        .status(400)
+        .json({ message: "Registro inválido" });
+    }
+
+    const registro = await RegistroHorario.findById(registroId);
 
     if (!registro) {
       return res
@@ -372,9 +408,9 @@ export const eliminarFichaje = async (
         .json({ message: "Registro no encontrado" });
     }
 
-const fichaje = registro.fichajes.find(
-  (f: any) => f._id?.toString() === fichajeId
-);
+    const fichaje = registro.fichajes.find(
+      (f: any) => f._id?.toString() === fichajeId
+    );
 
     if (!fichaje || fichaje.activo === false) {
       return res
@@ -384,7 +420,7 @@ const fichaje = registro.fichajes.find(
 
     fichaje.activo = false;
 
-    registro.minutosTrabajados = calcularMinutos(
+    registro.minutosTrabajados = calcularMinutosTrabajados(
       registro.fichajes
     );
     registro.corregida = true;
@@ -405,7 +441,9 @@ const fichaje = registro.fichajes.find(
 
 /* =========================
    🏖️ MARCAR DÍA (VACACIONES / BAJA / LIBRE)
-   POST /api/horario/crm/dia
+   POST /api/crm/horario/dia
+   - Sin empleadoId → marca GENERAL (festivo, etc.): usuario = null
+   - Con empleadoId → marca de ese empleado
 ========================= */
 export const marcarDia = async (
   req: Request,
@@ -413,80 +451,85 @@ export const marcarDia = async (
 ) => {
   try {
     const {
-  fecha,
-  estado,
-  turno,
-  empleadoId,
-  horasManana,
-  horasTarde,
-} = req.body;
-
-
+      fecha,
+      estado,
+      turno,
+      empleadoId,
+      horasManana,
+      horasTarde,
+    } = req.body;
 
     if (!fecha || (!estado && !turno)) {
-  return res
-    .status(400)
-    .json({ message: "Datos incompletos" });
-}
-
-
-    const filtro: any = { fecha };
-    if (empleadoId) {
-      filtro.usuario = empleadoId;
+      return res
+        .status(400)
+        .json({ message: "Datos incompletos" });
     }
 
-    let registro = await RegistroHorario.findOne(
-      filtro
-    );
+    if (!esFechaValida(fecha)) {
+      return res.status(400).json({ message: "Fecha inválida" });
+    }
+
+    if (estado && !ESTADOS.includes(estado)) {
+      return res.status(400).json({ message: "Estado inválido" });
+    }
+
+    if (turno && !TURNOS.includes(turno)) {
+      return res.status(400).json({ message: "Turno inválido" });
+    }
+
+    if (empleadoId && !isValidObjectId(empleadoId)) {
+      return res.status(400).json({ message: "Empleado inválido" });
+    }
+
+    if (!tramoValido(horasManana) || !tramoValido(horasTarde)) {
+      return res
+        .status(400)
+        .json({ message: "Horario de turno inválido (HH:mm)" });
+    }
+
+    if (estado === "VACACIONES" && empleadoId) {
+      const errorLimite = await errorLimiteVacaciones(empleadoId, [fecha]);
+      if (errorLimite) {
+        return res.status(400).json({ message: errorLimite });
+      }
+    }
+
+    // ✅ Siempre filtramos por usuario (null = registro general),
+    //    para no modificar por error el registro de un empleado.
+    const filtro: any = { fecha, usuario: empleadoId ?? null };
+
+    let registro = await RegistroHorario.findOne(filtro);
 
     if (!registro) {
-     registro = await RegistroHorario.create({
-  fecha,
-  usuario: empleadoId ?? null, // ✅ CLAVE
-  estado: estado ?? undefined,
-  turno: turno ?? undefined,
-  minutosTrabajados: 0,
-  fichajes: [],
-});
-
-
-if (horasManana) {
-  registro.horaEntradaManana = horasManana.entrada;
-  registro.horaSalidaManana = horasManana.salida;
-}
-
-if (horasTarde) {
-  registro.horaEntradaTarde = horasTarde.entrada;
-  registro.horaSalidaTarde = horasTarde.salida;
-}
-
-await registro.save();
-
-
+      registro = await RegistroHorario.create({
+        fecha,
+        usuario: empleadoId ?? null,
+        estado: estado ?? undefined,
+        turno: turno ?? undefined,
+        minutosTrabajados: 0,
+        fichajes: [],
+      });
     } else {
       if (estado !== null && estado !== undefined) {
-  registro.estado = estado;
-}
+        registro.estado = estado;
+      }
 
-if (turno !== null && turno !== undefined) {
-  registro.turno = turno;
-}
-
-if (horasManana) {
-  registro.horaEntradaManana = horasManana.entrada;
-  registro.horaSalidaManana = horasManana.salida;
-}
-
-if (horasTarde) {
-  registro.horaEntradaTarde = horasTarde.entrada;
-  registro.horaSalidaTarde = horasTarde.salida;
-}
-
-
-await registro.save();
-
-
+      if (turno !== null && turno !== undefined) {
+        registro.turno = turno;
+      }
     }
+
+    if (horasManana) {
+      registro.horaEntradaManana = horasManana.entrada;
+      registro.horaSalidaManana = horasManana.salida;
+    }
+
+    if (horasTarde) {
+      registro.horaEntradaTarde = horasTarde.entrada;
+      registro.horaSalidaTarde = horasTarde.salida;
+    }
+
+    await registro.save();
 
     return res.json({ ok: true });
   } catch (error) {
@@ -499,7 +542,7 @@ await registro.save();
 
 /* =========================
    ❌ ELIMINAR MARCA DE DÍA
-   DELETE /api/horario/crm/dia
+   DELETE /api/crm/horario/dia
 ========================= */
 export const eliminarDia = async (
   req: Request,
@@ -514,29 +557,37 @@ export const eliminarDia = async (
         .json({ message: "Fecha requerida" });
     }
 
-const filtro: any = { fecha };
-filtro.usuario = empleadoId ?? null;
+    if (!esFechaValida(fecha)) {
+      return res.status(400).json({ message: "Fecha inválida" });
+    }
 
+    if (empleadoId && !isValidObjectId(empleadoId)) {
+      return res.status(400).json({ message: "Empleado inválido" });
+    }
 
-    const registro = await RegistroHorario.findOne(
-      filtro
-    );
+    const registro = await RegistroHorario.findOne({
+      fecha,
+      usuario: empleadoId ?? null,
+    });
 
     if (!registro) {
-  return res.json({ ok: true });
-}
+      return res.json({ ok: true });
+    }
 
-// 🔹 Limpiar estado y turno
-registro.estado = undefined;
-registro.turno = undefined;
+    // 🔹 Limpiar estado, turno y horas del turno
+    registro.estado = undefined;
+    registro.turno = undefined;
+    registro.horaEntradaManana = undefined;
+    registro.horaSalidaManana = undefined;
+    registro.horaEntradaTarde = undefined;
+    registro.horaSalidaTarde = undefined;
 
-// 🔹 Si NO tiene fichajes → borrar registro completo
-if (!registro.fichajes || registro.fichajes.length === 0) {
-  await RegistroHorario.deleteOne({ _id: registro._id });
-} else {
-  await registro.save();
-}
-
+    // 🔹 Si NO tiene fichajes → borrar registro completo
+    if (!registro.fichajes || registro.fichajes.length === 0) {
+      await RegistroHorario.deleteOne({ _id: registro._id });
+    } else {
+      await registro.save();
+    }
 
     return res.json({ ok: true });
   } catch (error) {
@@ -549,82 +600,60 @@ if (!registro.fichajes || registro.fichajes.length === 0) {
 
 /* =========================
    📅 CALENDARIO GENERAL (VISUAL)
-   GET /api/horario/crm/calendario-general
+   GET /api/horario/calendario-general
+   GET /api/crm/horario/calendario-general
 ========================= */
-console.log("CRM CONTROLLER CARGADO");
 export const obtenerCalendarioGeneral = async (
   req: Request,
   res: Response
 ) => {
   try {
-    console.log("🔥🔥🔥 CALENDARIO GENERAL EJECUTADO 🔥🔥🔥");
     const { mes } = req.query as { mes: string };
 
     if (!mes) {
       return res.status(400).json({ message: "Mes requerido" });
     }
 
-    const [y, m] = mes.split("-").map(Number);
-    const totalDias = new Date(y, m, 0).getDate();
+    if (!esMesValido(mes)) {
+      return res
+        .status(400)
+        .json({ message: "Mes inválido (formato YYYY-MM)" });
+    }
 
-    // 🔹 Vacaciones de CUALQUIER empleado
-   const registrosVacaciones = await RegistroHorario.find({
-  fecha: {
-    $gte: `${y}-${String(m).padStart(2, "0")}-01`,
-    $lte: `${y}-${String(m).padStart(2, "0")}-${totalDias}`,
-  },
-  estado: "VACACIONES",
-  usuario: null, // 🔴 ESTA LÍNEA ES LA CLAVE
-}).select("fecha");
+    const { year, month, totalDias, desde, hasta } = rangoDelMes(mes);
 
-const registrosGenerales = await RegistroHorario.find({
-  fecha: {
-    $gte: `${y}-${String(m).padStart(2, "0")}-01`,
-    $lte: `${y}-${String(m).padStart(2, "0")}-${totalDias}`,
-  },
-  estado: { $in: ["FESTIVO", "DIA_LIBRE", "BAJA", "VACACIONES"] },
-  $or: [
-    { usuario: null },
-    { usuario: { $exists: false } }, // ✅ CLAVE
-  ],
-}).select("fecha estado");
+    const registrosGenerales = await RegistroHorario.find({
+      fecha: { $gte: desde, $lte: hasta },
+      estado: { $in: ["FESTIVO", "DIA_LIBRE", "BAJA", "VACACIONES"] },
+      $or: [{ usuario: null }, { usuario: { $exists: false } }],
+    }).select("fecha estado");
 
-
-
-
-
-    const diasVacaciones = new Set(
-  registrosVacaciones.map((r) => r.fecha)
-);
-
-const mapaEstados = new Map(
-  registrosGenerales.map((r) => [r.fecha, r.estado])
-);
-
-
+    const mapaEstados = new Map(
+      registrosGenerales.map((r) => [r.fecha, r.estado])
+    );
 
     const dias = [];
 
     for (let d = 1; d <= totalDias; d++) {
-      const fecha = `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(
-        2,
-        "0"
-      )}`;
+      const fecha = claveFecha(year, month, d);
 
-     let estado: "VACACIONES" | "DIA_LIBRE" | "BAJA" | "FESTIVO" | null = null;
+      let estado:
+        | "VACACIONES"
+        | "DIA_LIBRE"
+        | "BAJA"
+        | "FESTIVO"
+        | null = null;
 
-if (mapaEstados.has(fecha)) {
-  estado = mapaEstados.get(fecha) ?? null;
-} else if (esFinDeSemana(fecha)) {
-  estado = "DIA_LIBRE";
-}
+      if (mapaEstados.has(fecha)) {
+        estado = mapaEstados.get(fecha) ?? null;
+      } else if (esFinDeSemana(fecha)) {
+        estado = "DIA_LIBRE";
+      }
 
-
-dias.push({
-  fecha,
-  estado,
-});
-
+      dias.push({
+        fecha,
+        estado,
+      });
     }
 
     return res.json({ dias });
@@ -633,5 +662,178 @@ dias.push({
     return res
       .status(500)
       .json({ message: "Error calendario general" });
+  }
+};
+
+/* =========================
+   📚 MARCAR VARIOS DÍAS A LA VEZ
+   POST /api/crm/horario/dias-masivo
+   body: {
+     accion: "MARCAR" | "ELIMINAR",
+     fechas: string[],            // YYYY-MM-DD (máx. 62)
+     empleadoId?: string | null,  // null = general (festivos...)
+     estado?: ESTADO,             // o bien
+     turno?: TURNO + horasManana / horasTarde
+   }
+   - No toca los fichajes.
+   - Con estado se quitan turno y horas; con turno se quita el estado.
+========================= */
+export const marcarDiasMasivo = async (
+  req: Request,
+  res: Response
+) => {
+  try {
+    const {
+      accion,
+      fechas,
+      empleadoId,
+      estado,
+      turno,
+      horasManana,
+      horasTarde,
+    } = req.body ?? {};
+
+    if (accion !== "MARCAR" && accion !== "ELIMINAR") {
+      return res.status(400).json({ message: "Acción inválida" });
+    }
+
+    if (!Array.isArray(fechas) || fechas.length === 0) {
+      return res.status(400).json({ message: "Selecciona al menos un día" });
+    }
+
+    const unicas: string[] = Array.from(new Set<string>(fechas));
+
+    if (unicas.length > 62) {
+      return res
+        .status(400)
+        .json({ message: "Máximo 62 días por operación" });
+    }
+
+    if (!unicas.every((f) => esFechaValida(f))) {
+      return res.status(400).json({ message: "Hay fechas inválidas" });
+    }
+
+    if (empleadoId && !isValidObjectId(empleadoId)) {
+      return res.status(400).json({ message: "Empleado inválido" });
+    }
+
+    const usuario = empleadoId ?? null;
+
+    /* ---------- ELIMINAR MARCAS ---------- */
+    if (accion === "ELIMINAR") {
+      await RegistroHorario.updateMany(
+        { usuario, fecha: { $in: unicas } },
+        {
+          $unset: {
+            estado: "",
+            turno: "",
+            horaEntradaManana: "",
+            horaSalidaManana: "",
+            horaEntradaTarde: "",
+            horaSalidaTarde: "",
+          },
+        }
+      );
+
+      // Igual que el borrado de un día: sin fichajes → se borra el registro
+      const borrados = await RegistroHorario.deleteMany({
+        usuario,
+        fecha: { $in: unicas },
+        fichajes: { $size: 0 },
+      });
+
+      return res.json({
+        ok: true,
+        dias: unicas.length,
+        registrosBorrados: borrados.deletedCount ?? 0,
+      });
+    }
+
+    /* ---------- MARCAR ---------- */
+    if (!estado && !turno) {
+      return res.status(400).json({ message: "Datos incompletos" });
+    }
+
+    if (estado && turno) {
+      return res
+        .status(400)
+        .json({ message: "Indica un estado o un turno, no los dos" });
+    }
+
+    if (estado && !ESTADOS.includes(estado)) {
+      return res.status(400).json({ message: "Estado inválido" });
+    }
+
+    if (turno && !TURNOS.includes(turno)) {
+      return res.status(400).json({ message: "Turno inválido" });
+    }
+
+    if (!tramoValido(horasManana) || !tramoValido(horasTarde)) {
+      return res
+        .status(400)
+        .json({ message: "Horario de turno inválido (HH:mm)" });
+    }
+
+    if (estado === "VACACIONES" && empleadoId) {
+      const errorLimite = await errorLimiteVacaciones(empleadoId, unicas);
+      if (errorLimite) {
+        return res.status(400).json({ message: errorLimite });
+      }
+    }
+
+    const $set: Record<string, unknown> = {};
+    const $unset: Record<string, ""> = {};
+
+    if (estado) {
+      $set.estado = estado;
+      $unset.turno = "";
+      $unset.horaEntradaManana = "";
+      $unset.horaSalidaManana = "";
+      $unset.horaEntradaTarde = "";
+      $unset.horaSalidaTarde = "";
+    } else {
+      $set.turno = turno;
+      $unset.estado = "";
+
+      const usaManana = turno === "MANANA" || turno === "MANANA_TARDE";
+      const usaTarde = turno === "TARDE" || turno === "MANANA_TARDE";
+
+      const poner = (campo: string, valor: unknown, usa: boolean) => {
+        if (usa && typeof valor === "string" && valor !== "") {
+          $set[campo] = normalizarHora(valor);
+        } else {
+          $unset[campo] = "";
+        }
+      };
+
+      poner("horaEntradaManana", horasManana?.entrada, usaManana);
+      poner("horaSalidaManana", horasManana?.salida, usaManana);
+      poner("horaEntradaTarde", horasTarde?.entrada, usaTarde);
+      poner("horaSalidaTarde", horasTarde?.salida, usaTarde);
+    }
+
+    await RegistroHorario.bulkWrite(
+      unicas.map((fecha) => ({
+        updateOne: {
+          filter: { usuario, fecha },
+          update: {
+            $set,
+            $unset,
+            $setOnInsert: {
+              fichajes: [],
+              minutosTrabajados: 0,
+              corregida: false,
+              cerrada: false,
+            },
+          },
+          upsert: true,
+        },
+      })) as any
+    );
+
+    return res.json({ ok: true, dias: unicas.length });
+  } catch (error) {
+    console.error("❌ Error marcar días en masa:", error);
+    return res.status(500).json({ message: "Error marcar días" });
   }
 };

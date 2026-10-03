@@ -1,15 +1,22 @@
 import { Router, Request, Response } from "express";
+import { isValidObjectId } from "mongoose";
 import RegistroHorario from "../../models/RegistroHorario";
+import { authMiddleware, adminOnly } from "../../middlewares/auth";
+import {
+  calcularMinutosTrabajados,
+  esFechaValida,
+  esHoraValida,
+  normalizarHora,
+} from "../../utils/horario.utils";
 
 const router = Router();
 
 /* =========================
-   HELPERS
+   🔒 SOLO ADMIN CRM
+   (antes este router estaba abierto sin login)
 ========================= */
-const horaAMinutos = (hora: string): number => {
-  const [h, m] = hora.split(":").map(Number);
-  return h * 60 + m;
-};
+router.use(authMiddleware);
+router.use(adminOnly);
 
 /**
  * POST /api/crm/fichajes
@@ -17,8 +24,6 @@ const horaAMinutos = (hora: string): number => {
  */
 router.post("/", async (req: Request, res: Response) => {
   try {
-    console.log("POST /api/crm/fichajes → BODY:", req.body);
-
     if (!req.body) {
       return res.status(400).json({
         message: "Body vacío o no parseado",
@@ -32,12 +37,35 @@ router.post("/", async (req: Request, res: Response) => {
     }: {
       empleadoId?: string;
       fecha?: string;
-      fichajes?: { tipo: "ENTRADA" | "SALIDA"; hora: string }[];
+      fichajes?: { tipo: "ENTRADA" | "SALIDA"; hora: string; motivo?: string }[];
     } = req.body;
 
     if (!empleadoId || !fecha || !Array.isArray(fichajes)) {
       return res.status(400).json({
         message: "Datos incompletos",
+      });
+    }
+
+    if (!isValidObjectId(empleadoId)) {
+      return res.status(400).json({ message: "Empleado inválido" });
+    }
+
+    if (!esFechaValida(fecha)) {
+      return res.status(400).json({ message: "Fecha inválida" });
+    }
+
+    // Los vacíos y "00:00" se ignoran (como siempre); el resto debe ser válido
+    const aGuardar = fichajes.filter((f) => f && f.hora && f.hora !== "00:00");
+
+    const hayInvalidos = aGuardar.some(
+      (f) =>
+        (f.tipo !== "ENTRADA" && f.tipo !== "SALIDA") ||
+        !esHoraValida(f.hora)
+    );
+
+    if (hayInvalidos) {
+      return res.status(400).json({
+        message: "Hay fichajes con tipo u hora inválidos (HH:mm)",
       });
     }
 
@@ -57,48 +85,23 @@ router.post("/", async (req: Request, res: Response) => {
     }
 
     /* 2️⃣ Guardar fichajes (hora STRING HH:mm) */
-    registro.fichajes = fichajes
-      .filter((f) => f.hora && f.hora !== "00:00")
-      .map((f) => ({
-        tipo: f.tipo,
-        hora: f.hora, // ⬅️ STRING, NO Date
-        activo: true,
-      }));
+    registro.fichajes = aGuardar.map((f) => ({
+      tipo: f.tipo,
+      hora: normalizarHora(f.hora),
+      activo: true,
+      // Motivo de la pausa (solo tiene sentido en la SALIDA que la inicia)
+      ...(f.tipo === "SALIDA" && typeof f.motivo === "string" && f.motivo.trim()
+        ? { motivo: f.motivo.trim().slice(0, 80) }
+        : {}),
+    }));
 
     /* 3️⃣ Marcar como corregido desde CRM */
     registro.corregida = true;
 
     /* 4️⃣ Calcular minutos trabajados */
-    let minutos = 0;
-
-    const activos = registro.fichajes
-      .filter(
-        (f: any) =>
-          f.activo !== false &&
-          typeof f.hora === "string" &&
-          f.hora !== "00:00"
-      )
-      .sort(
-        (a: any, b: any) =>
-          horaAMinutos(a.hora) - horaAMinutos(b.hora)
-      );
-
-    for (let i = 0; i < activos.length; i += 2) {
-      const entrada = activos[i];
-      const salida = activos[i + 1];
-
-      if (!entrada || !salida) break;
-
-      const diff =
-        horaAMinutos(salida.hora) -
-        horaAMinutos(entrada.hora);
-
-      if (diff > 0) {
-        minutos += diff;
-      }
-    }
-
-    registro.minutosTrabajados = Math.round(minutos);
+    registro.minutosTrabajados = calcularMinutosTrabajados(
+      registro.fichajes
+    );
 
     /* 5️⃣ Guardar */
     await registro.save();
@@ -120,7 +123,7 @@ router.post("/", async (req: Request, res: Response) => {
  * GET /api/crm/fichajes
  * Recupera fichajes de un empleado en un día
  */
-router.get("/", async (req, res) => {
+router.get("/", async (req: Request, res: Response) => {
   try {
     const { empleadoId, fecha } = req.query as {
       empleadoId?: string;
@@ -130,6 +133,12 @@ router.get("/", async (req, res) => {
     if (!empleadoId || !fecha) {
       return res.status(400).json({
         message: "empleadoId y fecha son obligatorios",
+      });
+    }
+
+    if (!isValidObjectId(empleadoId) || !esFechaValida(fecha)) {
+      return res.status(400).json({
+        message: "empleadoId o fecha inválidos",
       });
     }
 
@@ -165,9 +174,13 @@ router.get("/", async (req, res) => {
  * DELETE /api/crm/fichajes/:fichajeId
  * Elimina (desactiva) un fichaje concreto
  */
-router.delete("/:fichajeId", async (req, res) => {
+router.delete("/:fichajeId", async (req: Request, res: Response) => {
   try {
     const { fichajeId } = req.params;
+
+    if (!isValidObjectId(fichajeId)) {
+      return res.status(400).json({ message: "Fichaje inválido" });
+    }
 
     const registro = await RegistroHorario.findOne({
       "fichajes._id": fichajeId,
@@ -193,33 +206,9 @@ router.delete("/:fichajeId", async (req, res) => {
     fichaje.activo = false;
 
     /* 🔄 Recalcular minutos */
-    let minutos = 0;
-
-    const activos = registro.fichajes
-      .filter(
-        (f: any) =>
-          f.activo !== false &&
-          typeof f.hora === "string" &&
-          f.hora !== "00:00"
-      )
-      .sort(
-        (a: any, b: any) =>
-          horaAMinutos(a.hora) - horaAMinutos(b.hora)
-      );
-
-    for (let i = 0; i < activos.length; i += 2) {
-      const entrada = activos[i];
-      const salida = activos[i + 1];
-      if (!entrada || !salida) break;
-
-      const diff =
-        horaAMinutos(salida.hora) -
-        horaAMinutos(entrada.hora);
-
-      if (diff > 0) minutos += diff;
-    }
-
-    registro.minutosTrabajados = Math.round(minutos);
+    registro.minutosTrabajados = calcularMinutosTrabajados(
+      registro.fichajes
+    );
     registro.corregida = true;
 
     await registro.save();

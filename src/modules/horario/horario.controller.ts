@@ -1,46 +1,22 @@
-import { Request, Response } from "express";
+import { Response } from "express";
 import RegistroHorario from "../../models/RegistroHorario";
 import { getIO } from "../../socket";
 import User from "../../models/User";
-
-/* =========================
-   HELPERS
-========================= */
-
-const horaAMinutos = (hora: string): number => {
-  const [h, m] = hora.split(":").map(Number);
-  return h * 60 + m;
-};
-
-const calcularMinutos = (fichajes: any[]) => {
-  const activos = fichajes
-    .filter(
-      (f: any) =>
-        f.activo !== false &&
-        typeof f.hora === "string" &&
-        f.hora !== "00:00"
-    )
-    .sort(
-      (a: any, b: any) =>
-        horaAMinutos(a.hora) - horaAMinutos(b.hora)
-    );
-
-  let total = 0;
-
-  for (let i = 0; i < activos.length; i += 2) {
-    const entrada = activos[i];
-    const salida = activos[i + 1];
-    if (!salida) break;
-
-    const diff =
-      horaAMinutos(salida.hora) -
-      horaAMinutos(entrada.hora);
-
-    if (diff > 0) total += diff;
-  }
-
-  return Math.round(total);
-};
+import {
+  ahoraEspana,
+  ajustarAHorario,
+  calcularMinutosTrabajados,
+  claveFecha,
+  esFinDeSemana,
+  esMesValido,
+  hoyEspana,
+  horaAMinutos,
+  mesActualEspana,
+  minutosATexto,
+  nombreDiaSemana,
+  normalizarHora,
+  rangoDelMes,
+} from "../../utils/horario.utils";
 
 /* =========================
    FICHAR (ENTRADA / SALIDA)
@@ -51,12 +27,8 @@ export const fichar = async (req: any, res: Response) => {
       return res.status(401).json({ message: "No autenticado" });
     }
 
-    const ahora = new Date();
-    const fechaLocal = ahora.toLocaleDateString("sv-SE"); // YYYY-MM-DD
-    const horaLocal = ahora.toLocaleTimeString("es-ES", {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
+    // 🕒 SIEMPRE hora y día de España (no los del servidor)
+    const { fecha: fechaLocal, hora: horaLocal } = ahoraEspana();
 
     let registro = await RegistroHorario.findOne({
       usuario: req.user.id,
@@ -65,24 +37,38 @@ export const fichar = async (req: any, res: Response) => {
 
     /* 🟢 Primer fichaje del día → ENTRADA */
     if (!registro) {
-      await RegistroHorario.create({
-        usuario: req.user.id,
-        fecha: fechaLocal,
-        fichajes: [
-          {
-            tipo: "ENTRADA",
-            hora: horaLocal,
-            activo: true,
-          },
-        ],
-        minutosTrabajados: 0,
-      });
+      try {
+        await RegistroHorario.create({
+          usuario: req.user.id,
+          fecha: fechaLocal,
+          fichajes: [
+            {
+              tipo: "ENTRADA",
+              hora: horaLocal,
+              activo: true,
+            },
+          ],
+          minutosTrabajados: 0,
+        });
 
-      return res.json({
-        estado: "DENTRO",
-        minutosTrabajados: 0,
-        nombre: req.user.nombre,
-      });
+        return res.json({
+          estado: "DENTRO",
+          minutosTrabajados: 0,
+          nombre: req.user.nombre,
+        });
+      } catch (error: any) {
+        // Doble clic: otra petición creó el registro justo antes
+        if (error?.code !== 11000) throw error;
+
+        registro = await RegistroHorario.findOne({
+          usuario: req.user.id,
+          fecha: fechaLocal,
+        });
+      }
+    }
+
+    if (!registro) {
+      throw new Error("No se pudo obtener el registro del día");
     }
 
     if (registro.cerrada) {
@@ -97,10 +83,13 @@ export const fichar = async (req: any, res: Response) => {
 
     /* 👉 Si no hay fichajes activos, forzar ENTRADA */
     if (fichajesActivos.length === 0) {
+      const ajuste = ajustarAHorario("ENTRADA", horaLocal, registro);
+
       registro.fichajes.push({
         tipo: "ENTRADA",
-        hora: horaLocal,
+        hora: ajuste.hora,
         activo: true,
+        ...(ajuste.ajustado ? { horaReal: horaLocal, ajustado: true } : {}),
       });
 
       registro.minutosTrabajados = 0;
@@ -110,13 +99,17 @@ export const fichar = async (req: any, res: Response) => {
         estado: "DENTRO",
         minutosTrabajados: 0,
         nombre: req.user.nombre,
+        horaRegistrada: ajuste.hora,
+        ajustado: ajuste.ajustado,
       });
     }
 
     const ultimo = fichajesActivos[fichajesActivos.length - 1];
 
-    /* ⛔ Anti doble clic (mismo minuto) */
-    if (horaAMinutos(horaLocal) === horaAMinutos(ultimo.hora)) {
+    /* ⛔ Anti doble clic (mismo minuto, comparando con la hora REAL del
+          último fichaje, que puede haberse ajustado al horario) */
+    const horaRealUltimo = (ultimo as any).horaReal ?? ultimo.hora;
+    if (horaAMinutos(horaLocal) === horaAMinutos(horaRealUltimo)) {
       return res.status(400).json({
         message: "Espera unos segundos antes de volver a fichar",
       });
@@ -124,24 +117,33 @@ export const fichar = async (req: any, res: Response) => {
 
     /* 🔁 Alternar ENTRADA / SALIDA */
     let nuevoEstado: "DENTRO" | "FUERA";
+    const tipoNuevo: "ENTRADA" | "SALIDA" =
+      ultimo.tipo === "ENTRADA" ? "SALIDA" : "ENTRADA";
 
-    if (ultimo.tipo === "ENTRADA") {
-      registro.fichajes.push({
-        tipo: "SALIDA",
-        hora: horaLocal,
-        activo: true,
-      });
-      nuevoEstado = "FUERA";
-    } else {
-      registro.fichajes.push({
-        tipo: "ENTRADA",
-        hora: horaLocal,
-        activo: true,
-      });
-      nuevoEstado = "DENTRO";
+    // Horario asignado: entrada nunca antes del turno; salida con margen
+    const ajuste = ajustarAHorario(tipoNuevo, horaLocal, registro);
+    let horaFinal = ajuste.hora;
+    let ajustado = ajuste.ajustado;
+
+    // Una salida nunca puede quedar antes de la entrada registrada
+    // (p. ej. entra 9:25 → se registra 9:30 y sale a las 9:27)
+    if (
+      tipoNuevo === "SALIDA" &&
+      horaAMinutos(horaFinal) < horaAMinutos(ultimo.hora)
+    ) {
+      horaFinal = ultimo.hora;
+      ajustado = horaFinal !== horaLocal;
     }
 
-    registro.minutosTrabajados = calcularMinutos(
+    registro.fichajes.push({
+      tipo: tipoNuevo,
+      hora: horaFinal,
+      activo: true,
+      ...(ajustado ? { horaReal: horaLocal, ajustado: true } : {}),
+    });
+    nuevoEstado = tipoNuevo === "SALIDA" ? "FUERA" : "DENTRO";
+
+    registro.minutosTrabajados = calcularMinutosTrabajados(
       registro.fichajes
     );
 
@@ -162,8 +164,17 @@ export const fichar = async (req: any, res: Response) => {
       estado: nuevoEstado,
       minutosTrabajados: registro.minutosTrabajados,
       nombre: req.user.nombre,
+      horaRegistrada: horaFinal,
+      ajustado,
     });
-  } catch (error) {
+  } catch (error: any) {
+    // Dos peticiones a la vez sobre el mismo registro
+    if (error?.name === "VersionError" || error?.code === 11000) {
+      return res.status(409).json({
+        message: "No se pudo registrar el fichaje, inténtalo de nuevo",
+      });
+    }
+
     console.error("❌ ERROR fichando:", error);
     return res.status(500).json({
       message: "Error fichando",
@@ -180,7 +191,7 @@ export const obtenerHoy = async (req: any, res: Response) => {
       return res.status(401).json({ message: "No autenticado" });
     }
 
-    const fechaLocal = new Date().toLocaleDateString("sv-SE");
+    const fechaLocal = hoyEspana();
 
     const registro = await RegistroHorario.findOne({
       usuario: req.user.id,
@@ -191,6 +202,7 @@ export const obtenerHoy = async (req: any, res: Response) => {
       return res.json({
         estado: "FUERA",
         minutosTrabajados: 0,
+        ultimaEntrada: null,
         nombre: req.user.nombre,
       });
     }
@@ -203,18 +215,22 @@ export const obtenerHoy = async (req: any, res: Response) => {
       return res.json({
         estado: "FUERA",
         minutosTrabajados: 0,
+        ultimaEntrada: null,
         nombre: req.user.nombre,
       });
     }
 
     const ultimo = fichajesActivos[fichajesActivos.length - 1];
+    const dentro = ultimo.tipo === "ENTRADA";
 
     return res.json({
-  estado: ultimo.tipo === "ENTRADA" ? "DENTRO" : "FUERA",
-  minutosTrabajados: registro.minutosTrabajados,
-  nombre: req.user.nombre, 
-});
-
+      estado: dentro ? "DENTRO" : "FUERA",
+      minutosTrabajados: registro.minutosTrabajados,
+      // Hora real de la última entrada (HH:mm, España): permite que la
+      // pantalla calcule el tiempo en vivo sin guardar nada en el navegador.
+      ultimaEntrada: dentro ? normalizarHora(ultimo.hora) : null,
+      nombre: req.user.nombre,
+    });
   } catch (error) {
     console.error("❌ ERROR obteniendo día:", error);
     return res.status(500).json({
@@ -232,19 +248,21 @@ export const historialMensual = async (req: any, res: Response) => {
       return res.status(401).json({ message: "No autenticado" });
     }
 
-    const { mes } = req.query;
-    const ahora = new Date();
+    const mesSolicitado = req.query.mes;
+
+    if (mesSolicitado !== undefined && !esMesValido(mesSolicitado)) {
+      return res
+        .status(400)
+        .json({ message: "Mes inválido (formato YYYY-MM)" });
+    }
+
+    const mes: string = mesSolicitado ?? mesActualEspana();
 
     const user = await User.findById(req.user.id).select(
       "horasContratadasSemana"
     );
 
-    const [year, month] = mes
-      ? mes.split("-").map(Number)
-      : [ahora.getFullYear(), ahora.getMonth() + 1];
-
-    const desde = `${year}-${String(month).padStart(2, "0")}-01`;
-    const hasta = `${year}-${String(month).padStart(2, "0")}-31`;
+    const { year, month, totalDias, desde, hasta } = rangoDelMes(mes);
 
     const registros = await RegistroHorario.find({
       usuario: req.user.id,
@@ -256,15 +274,11 @@ export const historialMensual = async (req: any, res: Response) => {
     );
 
     let totalMinutos = 0;
+    let diasTrabajados = 0;
     const dias: any[] = [];
 
-    const totalDiasMes = new Date(year, month, 0).getDate();
-
-    for (let d = 1; d <= totalDiasMes; d++) {
-      const fecha = `${year}-${String(month).padStart(
-        2,
-        "0"
-      )}-${String(d).padStart(2, "0")}`;
+    for (let d = 1; d <= totalDias; d++) {
+      const fecha = claveFecha(year, month, d);
 
       const registro = mapaRegistros.get(fecha);
 
@@ -274,18 +288,17 @@ export const historialMensual = async (req: any, res: Response) => {
           : 0;
 
       totalMinutos += minutosTrabajados;
+      if (minutosTrabajados > 0) diasTrabajados += 1;
 
       let estado = registro?.estado ?? null;
 
-      const day = new Date(fecha).getDay();
-      const esFinde = day === 0 || day === 6;
-
-      if (!estado && esFinde) {
+      if (!estado && esFinDeSemana(fecha)) {
         estado = "DIA_LIBRE";
       }
 
       dias.push({
         fecha,
+        diaSemana: nombreDiaSemana(fecha),
         estado,
         minutosTrabajados,
         fichajes: registro?.fichajes
@@ -308,9 +321,11 @@ export const historialMensual = async (req: any, res: Response) => {
     }
 
     return res.json({
-      mes: `${year}-${String(month).padStart(2, "0")}`,
+      mes,
       horasContratadasSemana: user?.horasContratadasSemana ?? 0,
       totalMinutos,
+      totalHoras: minutosATexto(totalMinutos),
+      diasTrabajados,
       dias,
     });
   } catch (error) {
