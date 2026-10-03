@@ -6,6 +6,7 @@ import { authMiddleware } from "../../middlewares/auth";
 // 👇 CONTROLADORES NORMALES (empleado)
 import {
   fichar,
+  pausar,
   obtenerHoy,
   historialMensual,
 } from "./horario.controller";
@@ -27,6 +28,13 @@ router.use(authMiddleware);
    POST /api/horario/fichar
 ========================= */
 router.post("/fichar", fichar);
+
+/* =========================
+   ☕ PAUSA (salir del puesto un rato)
+   POST /api/horario/pausa  { motivo }
+   Para volver se usa /fichar
+========================= */
+router.post("/pausa", pausar);
 
 /* =========================
    📅 MI ESTADO DE HOY

@@ -16,6 +16,7 @@ import {
   nombreDiaSemana,
   normalizarHora,
   rangoDelMes,
+  tramosDelTurno,
 } from "../../utils/horario.utils";
 
 /* =========================
@@ -121,7 +122,11 @@ export const fichar = async (req: any, res: Response) => {
       ultimo.tipo === "ENTRADA" ? "SALIDA" : "ENTRADA";
 
     // Horario asignado: entrada nunca antes del turno; salida con margen
-    const ajuste = ajustarAHorario(tipoNuevo, horaLocal, registro);
+    // Al volver de una pausa NO se ajusta (si no, saltaría al turno de tarde)
+    const vuelveDePausa = tipoNuevo === "ENTRADA" && !!(ultimo as any).pausa;
+    const ajuste = vuelveDePausa
+      ? { hora: horaLocal, ajustado: false }
+      : ajustarAHorario(tipoNuevo, horaLocal, registro);
     let horaFinal = ajuste.hora;
     let ajustado = ajuste.ajustado;
 
@@ -198,37 +203,53 @@ export const obtenerHoy = async (req: any, res: Response) => {
       fecha: fechaLocal,
     });
 
+    const vacio = {
+      estado: "FUERA",
+      minutosTrabajados: 0,
+      ultimaEntrada: null,
+      fichajes: [],
+      turno: [],
+      pausa: null,
+      nombre: req.user.nombre,
+    };
+
     if (!registro) {
-      return res.json({
-        estado: "FUERA",
-        minutosTrabajados: 0,
-        ultimaEntrada: null,
-        nombre: req.user.nombre,
-      });
+      return res.json(vacio);
     }
+
+    const turno = tramosDelTurno(registro);
 
     const fichajesActivos = registro.fichajes.filter(
       (f: any) => f.activo !== false
     );
 
     if (fichajesActivos.length === 0) {
-      return res.json({
-        estado: "FUERA",
-        minutosTrabajados: 0,
-        ultimaEntrada: null,
-        nombre: req.user.nombre,
-      });
+      return res.json({ ...vacio, turno });
     }
 
-    const ultimo = fichajesActivos[fichajesActivos.length - 1];
+    const ultimo: any = fichajesActivos[fichajesActivos.length - 1];
     const dentro = ultimo.tipo === "ENTRADA";
+    const enPausa = !dentro && ultimo.pausa === true;
 
     return res.json({
-      estado: dentro ? "DENTRO" : "FUERA",
+      estado: dentro ? "DENTRO" : enPausa ? "PAUSA" : "FUERA",
       minutosTrabajados: registro.minutosTrabajados,
       // Hora real de la última entrada (HH:mm, España): permite que la
       // pantalla calcule el tiempo en vivo sin guardar nada en el navegador.
       ultimaEntrada: dentro ? normalizarHora(ultimo.hora) : null,
+      // Pausa en curso (si la hay)
+      pausa: enPausa
+        ? { motivo: ultimo.motivo ?? "", desde: normalizarHora(ultimo.hora) }
+        : null,
+      // Fichajes de hoy para pintar la línea de tiempo
+      fichajes: fichajesActivos.map((f: any) => ({
+        tipo: f.tipo,
+        hora: normalizarHora(f.hora),
+        ...(f.pausa ? { pausa: true } : {}),
+        ...(f.motivo ? { motivo: String(f.motivo) } : {}),
+      })),
+      // Tramos de su turno de hoy (para "turno de hoy" y la barra de progreso)
+      turno,
       nombre: req.user.nombre,
     });
   } catch (error) {
@@ -236,6 +257,91 @@ export const obtenerHoy = async (req: any, res: Response) => {
     return res.status(500).json({
       message: "Error obteniendo jornada",
     });
+  }
+};
+
+/* =========================
+   PAUSA (salir del puesto un rato)
+   POST /api/horario/pausa  { motivo }
+   - Solo si está dentro de la jornada.
+   - Guarda una SALIDA marcada como pausa (con motivo).
+   - NO cierra la sesión del CRM, pero mientras dura las ventas quedan
+     bloqueadas (la última marca ya no es una ENTRADA).
+   - Para volver se usa /fichar (crea la ENTRADA).
+========================= */
+export const pausar = async (req: any, res: Response) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ message: "No autenticado" });
+    }
+
+    const { fecha: fechaLocal, hora: horaLocal } = ahoraEspana();
+
+    const motivoRecibido =
+      typeof req.body?.motivo === "string" ? req.body.motivo.trim() : "";
+    const motivo = (motivoRecibido || "Pausa").slice(0, 40);
+
+    const registro = await RegistroHorario.findOne({
+      usuario: req.user.id,
+      fecha: fechaLocal,
+    });
+
+    if (!registro || registro.cerrada) {
+      return res
+        .status(400)
+        .json({ message: "Solo puedes pausar durante tu jornada" });
+    }
+
+    const activos = registro.fichajes.filter((f: any) => f.activo !== false);
+    const ultimo: any = activos[activos.length - 1];
+
+    if (!ultimo || ultimo.tipo !== "ENTRADA") {
+      return res
+        .status(400)
+        .json({ message: "Solo puedes pausar durante tu jornada" });
+    }
+
+    /* ⛔ Anti doble clic (mismo minuto que la entrada real) */
+    const horaRealUltimo = ultimo.horaReal ?? ultimo.hora;
+    if (horaAMinutos(horaLocal) === horaAMinutos(horaRealUltimo)) {
+      return res.status(400).json({
+        message: "Espera unos segundos antes de volver a fichar",
+      });
+    }
+
+    // La pausa nunca puede empezar antes de la entrada registrada
+    const horaPausa =
+      horaAMinutos(horaLocal) < horaAMinutos(ultimo.hora)
+        ? ultimo.hora
+        : horaLocal;
+
+    registro.fichajes.push({
+      tipo: "SALIDA",
+      hora: horaPausa,
+      activo: true,
+      pausa: true,
+      motivo,
+    });
+
+    registro.minutosTrabajados = calcularMinutosTrabajados(registro.fichajes);
+
+    await registro.save();
+
+    return res.json({
+      estado: "PAUSA",
+      minutosTrabajados: registro.minutosTrabajados,
+      nombre: req.user.nombre,
+      pausa: { motivo, desde: horaPausa },
+    });
+  } catch (error: any) {
+    if (error?.name === "VersionError" || error?.code === 11000) {
+      return res.status(409).json({
+        message: "No se pudo registrar la pausa, inténtalo de nuevo",
+      });
+    }
+
+    console.error("❌ ERROR en pausa:", error);
+    return res.status(500).json({ message: "Error registrando la pausa" });
   }
 };
 

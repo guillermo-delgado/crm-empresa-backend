@@ -335,3 +335,31 @@ export function minutosObjetivoDia(
   if (finDeSemana) return 0;
   return Math.round(((Number(horasContratadasSemana) || 0) * 60) / 5);
 }
+
+
+/**
+ * Tramos de trabajo del turno asignado ("HH:mm"), respetando el turno
+ * (mañana / tarde / ambos). Vacío si no hay turno u horas definidas.
+ */
+export function tramosDelTurno(
+  horario: HorarioAsignado | null | undefined
+): { entrada: string; salida: string }[] {
+  if (!horario || !horario.turno) return [];
+
+  const tramos: { entrada: string; salida: string }[] = [];
+
+  const anadir = (e?: string | null, s?: string | null) => {
+    if (esHoraValida(e) && esHoraValida(s) && horaAMinutos(s) > horaAMinutos(e)) {
+      tramos.push({ entrada: normalizarHora(e), salida: normalizarHora(s) });
+    }
+  };
+
+  if (horario.turno !== "TARDE") {
+    anadir(horario.horaEntradaManana, horario.horaSalidaManana);
+  }
+  if (horario.turno !== "MANANA") {
+    anadir(horario.horaEntradaTarde, horario.horaSalidaTarde);
+  }
+
+  return tramos;
+}

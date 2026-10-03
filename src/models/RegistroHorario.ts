@@ -10,6 +10,7 @@ export interface IFichaje {
   motivo?: string;   // motivo de pausa (en la SALIDA que la inicia)
   horaReal?: string; // hora real del fichaje si se ajustó al horario
   ajustado?: boolean;
+  pausa?: boolean;   // SALIDA que es una pausa (no fin de jornada)
 }
 
 
@@ -56,6 +57,9 @@ const FichajeSchema = new mongoose.Schema<IFichaje>(
     // Hora real en que fichó (solo si se ajustó al horario asignado)
     horaReal: { type: String, default: undefined },
     ajustado: { type: Boolean, default: undefined },
+
+    // true = esta SALIDA es una pausa (el empleado volverá)
+    pausa: { type: Boolean, default: undefined },
 
     // Motivo de una pausa (opcional)
     motivo: {
