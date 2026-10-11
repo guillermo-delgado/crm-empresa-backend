@@ -5,6 +5,7 @@ import User from "../../models/User";
 import {
   calcularMinutosTrabajados,
   claveFecha,
+  corregirFichajesErroneos,
   esFechaValida,
   esFinDeSemana,
   esHoraValida,
@@ -237,12 +238,18 @@ export const obtenerCalendarioEmpleado = async (
         mapaRegistros.get(keyGlobal) ??
         null;
 
+      // Fichajes ya corregidos (entradas/salidas que el ajuste al horario dejó mal)
+      const fichajesCorregidos = corregirFichajesErroneos(
+        registro?.fichajes ?? [],
+        registro
+      ).fichajes;
+
       // ⏱️ Minutos reales desde fichajes (mismo cálculo que en todo el sistema)
-      const minutosTrabajados = registro?.fichajes?.length
-        ? calcularMinutosTrabajados(registro.fichajes)
+      const minutosTrabajados = fichajesCorregidos.length
+        ? calcularMinutosTrabajados(fichajesCorregidos)
         : 0;
 
-      const fichajes: FichajeDia[] = (registro?.fichajes ?? [])
+      const fichajes: FichajeDia[] = fichajesCorregidos
         .filter((f: any) => f.activo !== false)
         .map((f: any) => ({
           tipo: f.tipo,

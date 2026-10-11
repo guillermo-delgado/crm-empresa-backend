@@ -7,6 +7,7 @@ import {
   ajustarAHorario,
   calcularMinutosTrabajados,
   claveFecha,
+  corregirFichajesErroneos,
   esFinDeSemana,
   esMesValido,
   hoyEspana,
@@ -388,10 +389,14 @@ export const historialMensual = async (req: any, res: Response) => {
 
       const registro = mapaRegistros.get(fecha);
 
-      const minutosTrabajados =
-        registro?.minutosTrabajados && registro.minutosTrabajados > 0
-          ? registro.minutosTrabajados
-          : 0;
+      // Fichajes corregidos y minutos recalculados (mismo cálculo que el CRM)
+      const fichajesCorregidos = registro
+        ? corregirFichajesErroneos(registro.fichajes ?? [], registro).fichajes
+        : [];
+
+      const minutosTrabajados = fichajesCorregidos.length
+        ? calcularMinutosTrabajados(fichajesCorregidos)
+        : 0;
 
       totalMinutos += minutosTrabajados;
       if (minutosTrabajados > 0) diasTrabajados += 1;
@@ -407,8 +412,8 @@ export const historialMensual = async (req: any, res: Response) => {
         diaSemana: nombreDiaSemana(fecha),
         estado,
         minutosTrabajados,
-        fichajes: registro?.fichajes
-          ? registro.fichajes
+        fichajes: fichajesCorregidos.length
+          ? fichajesCorregidos
               .filter(
                 (f: any) =>
                   f.activo !== false && f.hora !== "00:00"

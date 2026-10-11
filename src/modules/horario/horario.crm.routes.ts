@@ -15,6 +15,13 @@ import {
   marcarDiasMasivo,
 } from "./horario.crm.controller";
 
+import {
+  obtenerSaldoEmpleado,
+  crearAjusteHoras,
+  eliminarAjusteHoras,
+  liquidarSaldoHoras,
+} from "./saldo.horas.controller";
+
 const router = Router();
 
 /* =========================
@@ -79,5 +86,17 @@ router.delete("/dia", eliminarDia);
    POST /api/crm/horario/dias-masivo
 ========================= */
 router.post("/dias-masivo", marcarDiasMasivo);
+
+/* =========================
+   ⏳ BOLSA DE HORAS DEL EMPLEADO
+   GET    /api/crm/horario/saldo?empleadoId=ID&mes=YYYY-MM
+   POST   /api/crm/horario/saldo/ajustes
+   DELETE /api/crm/horario/saldo/ajustes/:id
+   POST   /api/crm/horario/saldo/liquidar
+========================= */
+router.get("/saldo", obtenerSaldoEmpleado);
+router.post("/saldo/ajustes", crearAjusteHoras);
+router.delete("/saldo/ajustes/:id", eliminarAjusteHoras);
+router.post("/saldo/liquidar", liquidarSaldoHoras);
 
 export default router;

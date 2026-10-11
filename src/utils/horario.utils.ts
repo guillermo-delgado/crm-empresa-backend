@@ -178,8 +178,9 @@ export function minutosATexto(min: number): string {
  * - Una ENTRADA sin SALIDA no suma (jornada abierta).
  */
 export function calcularMinutosTrabajados(fichajes: any[]): number {
-  const validos = (fichajes ?? [])
-    .filter(
+  // Si hay fichajes erróneos por el ajuste al horario, se cuentan ya corregidos
+  const validos = corregirFichajesErroneos(fichajes ?? [])
+    .fichajes.filter(
       (f: any) =>
         f &&
         f.activo !== false &&
@@ -215,6 +216,9 @@ export function calcularMinutosTrabajados(fichajes: any[]): number {
 /** Margen de salida: hasta estos minutos de retraso se registra la hora del horario. */
 export const TOLERANCIA_SALIDA_MIN = 17;
 
+/** Cortesía de entrada: hasta estos minutos después del inicio del turno se registra la hora del turno. */
+export const TOLERANCIA_ENTRADA_MIN = 5;
+
 type HorarioAsignado = {
   turno?: string | null;
   horaEntradaManana?: string | null;
@@ -225,8 +229,9 @@ type HorarioAsignado = {
 
 /**
  * Aplica las reglas del horario asignado a la hora real del fichaje:
- *  - ENTRADA antes de la hora del turno → se registra la hora del turno
- *    (no se cuenta tiempo anterior). Tarde o sin horario → hora real.
+ *  - ENTRADA antes de la hora del turno, o hasta TOLERANCIA_ENTRADA_MIN
+ *    minutos después → se registra la hora del turno (no se cuenta tiempo
+ *    anterior). Con más retraso o sin horario → hora real.
  *  - SALIDA hasta TOLERANCIA_SALIDA_MIN minutos después del fin del turno →
  *    se registra la hora de fin del turno. Más tarde → hora real.
  *    Salir antes de tiempo → hora real.
@@ -272,6 +277,27 @@ export function ajustarAHorario(
   const ahora = horaAMinutos(horaReal);
 
   if (tipo === "ENTRADA") {
+    // Cortesía: hasta TOLERANCIA_ENTRADA_MIN minutos después del inicio de un
+    // turno se registra la hora del turno
+    const cortesia = tramos
+      .filter(
+        (t) =>
+          ahora >= t.entrada &&
+          ahora <= t.entrada + TOLERANCIA_ENTRADA_MIN &&
+          ahora < t.salida
+      )
+      .sort((a, b) => b.entrada - a.entrada);
+
+    if (cortesia.length > 0) {
+      return { hora: cortesia[0].e, ajustado: ahora !== cortesia[0].entrada };
+    }
+
+    // Llega con el turno ya empezado (y pasada la cortesía) → su hora real.
+    // Sin esto, una entrada tarde por la mañana saltaba al turno de la tarde.
+    if (tramos.some((t) => ahora > t.entrada && ahora < t.salida)) {
+      return sinCambio;
+    }
+
     // Próximo inicio de turno que aún no ha empezado
     const proximos = tramos
       .filter((t) => ahora < t.entrada)
@@ -293,6 +319,109 @@ export function ajustarAHorario(
   }
 
   return sinCambio;
+}
+
+
+/* =========================
+   CORRECCIÓN DE FICHAJES ERRÓNEOS
+========================= */
+
+export type CambioFichaje = {
+  indice: number;
+  tipo: string;
+  de: string;
+  a: string;
+};
+
+/**
+ * Corrige el error que producía el ajuste al horario: una ENTRADA se subía al
+ * inicio de un turno POSTERIOR a la hora real en que el empleado salió (p. ej.
+ * entrada real 08:55 guardada como 17:00 porque el horario del día no incluía
+ * la mañana) y la SALIDA siguiente quedaba clavada a esa hora (14:02 → 17:00).
+ *
+ * Señal: una SALIDA ajustada cuya hora quedó DESPUÉS de su hora real, justo
+ * detrás de una ENTRADA ajustada.
+ *
+ * Corrección (mismas reglas de siempre, sobre las horas reales guardadas):
+ *  - ENTRADA: si llegó antes del turno se marca la hora del turno, salvo que
+ *    esa hora sea posterior a la salida real; entonces, su hora real.
+ *  - SALIDA: la regla de salida de siempre sobre su hora real, sin quedar
+ *    antes que la entrada.
+ * Sin `horario` se usan las horas reales.
+ *
+ * No modifica lo que recibe: devuelve una copia y la lista de cambios.
+ */
+export function corregirFichajesErroneos(
+  fichajes: any[],
+  horario?: HorarioAsignado | null
+): { fichajes: any[]; cambios: CambioFichaje[] } {
+  const lista: any[] = (fichajes ?? []).map((f: any) =>
+    f && typeof f.toObject === "function" ? { ...f.toObject() } : { ...f }
+  );
+  const cambios: CambioFichaje[] = [];
+
+  let entradaIdx = -1;
+
+  lista.forEach((f, i) => {
+    if (!f || f.activo === false) return;
+
+    if (f.tipo === "ENTRADA") {
+      entradaIdx = i;
+      return;
+    }
+    if (f.tipo !== "SALIDA") return;
+
+    const e = entradaIdx >= 0 ? lista[entradaIdx] : null;
+    const idxE = entradaIdx;
+    entradaIdx = -1;
+
+    if (
+      !e ||
+      !e.ajustado ||
+      !f.ajustado ||
+      !esHoraValida(e.hora) ||
+      !esHoraValida(e.horaReal) ||
+      !esHoraValida(f.hora) ||
+      !esHoraValida(f.horaReal)
+    ) {
+      return;
+    }
+
+    // La salida solo está mal si quedó más tarde que la real...
+    if (horaAMinutos(f.hora) <= horaAMinutos(f.horaReal)) return;
+    // ...y los datos reales deben tener sentido (entrada real antes de la salida real)
+    if (horaAMinutos(e.horaReal) > horaAMinutos(f.horaReal)) return;
+
+    const porHorarioE = horario
+      ? ajustarAHorario("ENTRADA", e.horaReal, horario).hora
+      : e.horaReal;
+    const entradaOk = normalizarHora(
+      horaAMinutos(porHorarioE) <= horaAMinutos(f.horaReal)
+        ? porHorarioE
+        : e.horaReal
+    );
+
+    const porHorarioS = horario
+      ? ajustarAHorario("SALIDA", f.horaReal, horario).hora
+      : f.horaReal;
+    let salidaOk = normalizarHora(porHorarioS);
+    if (horaAMinutos(salidaOk) < horaAMinutos(entradaOk)) {
+      salidaOk = normalizarHora(f.horaReal);
+    }
+
+    if (normalizarHora(e.hora) !== entradaOk) {
+      cambios.push({ indice: idxE, tipo: "ENTRADA", de: e.hora, a: entradaOk });
+      e.hora = entradaOk;
+      e.ajustado = entradaOk !== normalizarHora(e.horaReal);
+    }
+    if (normalizarHora(f.hora) !== salidaOk) {
+      cambios.push({ indice: i, tipo: "SALIDA", de: f.hora, a: salidaOk });
+      f.hora = salidaOk;
+      f.ajustado = salidaOk !== normalizarHora(f.horaReal);
+    }
+  });
+
+  return { fichajes: lista, cambios };
 }
 
 
