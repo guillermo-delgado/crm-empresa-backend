@@ -9,7 +9,7 @@ export interface ISorteo extends Document {
 
   fechaInicio: Date;
   fechaFin: Date;
-  criterioFecha: "REGISTRO" | "EFECTO";
+  criterioFecha: "REGISTRO" | "EFECTO" | "AMBAS";
 
   ramos: {
     nombre: string;
@@ -24,7 +24,7 @@ export interface ISorteo extends Document {
     tomador: string;
     aseguradora: string;
     ramo: string;
-    fechaEfecto: Date;
+    fechaEfecto?: Date;
     fechaRegistro?: Date;
     participaciones: number;
     primaNeta?: number;
@@ -117,9 +117,10 @@ const ParticipanteSchema = new Schema(
       required: true,
       trim: true,
     },
+    // Opcional: las pólizas añadidas a mano pueden no existir en ventas.
     fechaEfecto: {
       type: Date,
-      required: true,
+      required: false,
     },
     fechaRegistro: {
       type: Date,
@@ -272,7 +273,7 @@ const SorteoSchema = new Schema<ISorteo>(
     },
     criterioFecha: {
       type: String,
-      enum: ["REGISTRO", "EFECTO"],
+      enum: ["REGISTRO", "EFECTO", "AMBAS"],
       required: true,
       default: "EFECTO",
     },

@@ -39,10 +39,34 @@ const tramoValido = (tramo: any): boolean =>
 /* =========================
    🏖️ LÍMITE DE VACACIONES (por año natural)
 ========================= */
+export type TipoDiasVacaciones = "LABORABLES" | "NATURALES";
+
+const tipoDeEmpleado = (empleado: any): TipoDiasVacaciones =>
+  empleado?.tipoDiasVacaciones === "LABORABLES" ? "LABORABLES" : "NATURALES";
+
+/** Fechas con festivo o baja (generales o del propio empleado) entre dos fechas. */
+const festivosEntre = async (
+  empleadoId: string,
+  desde: string,
+  hasta: string
+): Promise<Set<string>> => {
+  const regs: any[] = await RegistroHorario.find({
+    usuario: { $in: [null, empleadoId] },
+    estado: { $in: ["FESTIVO", "BAJA"] },
+    fecha: { $gte: desde, $lte: hasta },
+  }).select("fecha");
+  return new Set(regs.map((r) => r.fecha));
+};
+
+/** Laborable = no es fin de semana, festivo ni baja. */
+const esLaborable = (fecha: string, festivos: Set<string>) =>
+  !esFinDeSemana(fecha) && !festivos.has(fecha);
+
 const contarVacaciones = async (
   empleadoId: string,
   year: string,
-  excluirFechas: string[] = []
+  excluirFechas: string[] = [],
+  tipo: TipoDiasVacaciones = "NATURALES"
 ): Promise<number> => {
   const rango: any = {
     $gte: `${year}-01-01`,
@@ -51,34 +75,68 @@ const contarVacaciones = async (
   };
 
   // Vacaciones marcadas al propio empleado
-  const propias = await RegistroHorario.countDocuments({
+  const propias: any[] = await RegistroHorario.find({
     usuario: empleadoId,
     estado: "VACACIONES",
     fecha: rango,
-  });
+  }).select("fecha");
 
   // Vacaciones generales (marcadas desde "Todos los empleados"): también
   // se ven en su calendario, salvo que el día tenga un registro propio.
-  const generales = await RegistroHorario.find({
+  const generales: any[] = await RegistroHorario.find({
     usuario: null,
     estado: "VACACIONES",
     fecha: rango,
   }).select("fecha");
 
-  if (generales.length === 0) return propias;
+  const fechas = new Set<string>(propias.map((r) => r.fecha));
 
-  const fechasGenerales = generales.map((r: any) => r.fecha);
-  const conRegistroPropio = await RegistroHorario.find({
-    usuario: empleadoId,
-    fecha: { $in: fechasGenerales },
-  }).select("fecha");
+  if (generales.length > 0) {
+    const fechasGenerales = generales.map((r) => r.fecha);
+    const conRegistroPropio = await RegistroHorario.find({
+      usuario: empleadoId,
+      fecha: { $in: fechasGenerales },
+    }).select("fecha");
+    const propiasSet = new Set(conRegistroPropio.map((r: any) => r.fecha));
+    fechasGenerales
+      .filter((f: string) => !propiasSet.has(f))
+      .forEach((f: string) => fechas.add(f));
+  }
 
-  const propiasSet = new Set(conRegistroPropio.map((r: any) => r.fecha));
-  const soloGenerales = new Set(
-    fechasGenerales.filter((f: string) => !propiasSet.has(f))
+  if (tipo === "NATURALES") return fechas.size;
+
+  // Laborables: no cuentan fines de semana ni festivos
+  const festivos = await festivosEntre(
+    empleadoId,
+    `${year}-01-01`,
+    `${year}-12-31`
   );
+  return [...fechas].filter((f) => esLaborable(f, festivos)).length;
+};
 
-  return propias + soloGenerales.size;
+/**
+ * Según el tipo de días del empleado, devuelve las fechas a las que se pueden
+ * aplicar vacaciones. Con días laborables se descartan fines de semana, festivos y bajas.
+ */
+const fechasPermitidasVacaciones = async (
+  empleadoId: string,
+  fechas: string[]
+): Promise<{ permitidas: string[]; tipo: TipoDiasVacaciones }> => {
+  const empleado: any = await User.findById(empleadoId);
+  const tipo = tipoDeEmpleado(empleado);
+  if (tipo === "NATURALES" || fechas.length === 0) {
+    return { permitidas: fechas, tipo };
+  }
+  const ordenadas = [...fechas].sort();
+  const festivos = await festivosEntre(
+    empleadoId,
+    ordenadas[0],
+    ordenadas[ordenadas.length - 1]
+  );
+  return {
+    permitidas: fechas.filter((f) => esLaborable(f, festivos)),
+    tipo,
+  };
 };
 
 /**
@@ -91,6 +149,7 @@ const errorLimiteVacaciones = async (
 ): Promise<string | null> => {
   const empleado: any = await User.findById(empleadoId);
   const max: number = empleado?.maxDiasVacaciones ?? 30;
+  const tipo = tipoDeEmpleado(empleado);
 
   const porAnio = new Map<string, string[]>();
   for (const f of fechas) {
@@ -100,7 +159,7 @@ const errorLimiteVacaciones = async (
 
   for (const [year, lista] of porAnio) {
     // Los días que ya eran vacaciones no cuentan como nuevos
-    const usados = await contarVacaciones(empleadoId, year, lista);
+    const usados = await contarVacaciones(empleadoId, year, lista, tipo);
     if (usados + lista.length > max) {
       const quedan = Math.max(0, max - usados);
       return quedan === 0
@@ -164,6 +223,7 @@ export const obtenerCalendarioEmpleado = async (
 
     let horasContratadasSemana = 40;
     let maxDiasVacaciones = 30;
+    let tipoDiasVacaciones: TipoDiasVacaciones = "NATURALES";
 
     if (empleadoId) {
       const empleado = await User.findById(empleadoId);
@@ -174,6 +234,8 @@ export const obtenerCalendarioEmpleado = async (
 
         maxDiasVacaciones =
           empleado.maxDiasVacaciones ?? 30;
+
+        tipoDiasVacaciones = tipoDeEmpleado(empleado);
       }
     }
 
@@ -301,7 +363,12 @@ export const obtenerCalendarioEmpleado = async (
 
     // 🏖️ Vacaciones ya aplicadas en el año del mes consultado
     const diasVacacionesUsados = empleadoId
-      ? await contarVacaciones(empleadoId, String(year))
+      ? await contarVacaciones(
+          empleadoId,
+          String(year),
+          [],
+          tipoDiasVacaciones
+        )
       : 0;
 
     return res.json({
@@ -314,6 +381,7 @@ export const obtenerCalendarioEmpleado = async (
       minutosTeoricosMes: Math.round(minutosTeoricosMes),
       horasContratadasSemana,
       maxDiasVacaciones,
+      tipoDiasVacaciones,
     });
   } catch (error) {
     console.error("❌ Error calendario:", error);
@@ -495,6 +563,17 @@ export const marcarDia = async (
     }
 
     if (estado === "VACACIONES" && empleadoId) {
+      const { permitidas, tipo } = await fechasPermitidasVacaciones(
+        empleadoId,
+        [fecha]
+      );
+      if (tipo === "LABORABLES" && permitidas.length === 0) {
+        return res.status(400).json({
+          message:
+            "Con vacaciones en días laborables no se pueden aplicar en fines de semana, festivos ni días de baja",
+        });
+      }
+
       const errorLimite = await errorLimiteVacaciones(empleadoId, [fecha]);
       if (errorLimite) {
         return res.status(400).json({ message: errorLimite });
@@ -781,8 +860,29 @@ export const marcarDiasMasivo = async (
         .json({ message: "Horario de turno inválido (HH:mm)" });
     }
 
+    // Fechas a las que realmente se aplica (con vacaciones en días laborables
+    // se saltan fines de semana y festivos)
+    let fechasAplicar: string[] = unicas;
+
     if (estado === "VACACIONES" && empleadoId) {
-      const errorLimite = await errorLimiteVacaciones(empleadoId, unicas);
+      const { permitidas } = await fechasPermitidasVacaciones(
+        empleadoId,
+        unicas
+      );
+
+      if (permitidas.length === 0) {
+        return res.status(400).json({
+          message:
+            "Con vacaciones en días laborables no se pueden aplicar en fines de semana, festivos ni días de baja",
+        });
+      }
+
+      fechasAplicar = permitidas;
+
+      const errorLimite = await errorLimiteVacaciones(
+        empleadoId,
+        fechasAplicar
+      );
       if (errorLimite) {
         return res.status(400).json({ message: errorLimite });
       }
@@ -820,7 +920,7 @@ export const marcarDiasMasivo = async (
     }
 
     await RegistroHorario.bulkWrite(
-      unicas.map((fecha) => ({
+      fechasAplicar.map((fecha) => ({
         updateOne: {
           filter: { usuario, fecha },
           update: {
@@ -838,7 +938,11 @@ export const marcarDiasMasivo = async (
       })) as any
     );
 
-    return res.json({ ok: true, dias: unicas.length });
+    return res.json({
+      ok: true,
+      dias: fechasAplicar.length,
+      omitidos: unicas.length - fechasAplicar.length,
+    });
   } catch (error) {
     console.error("❌ Error marcar días en masa:", error);
     return res.status(500).json({ message: "Error marcar días" });

@@ -110,6 +110,7 @@ export const listarUsuariosAsignables = async (
         role
         horasContratadasSemana
         maxDiasVacaciones
+        tipoDiasVacaciones
       `
     ).sort({ nombre: 1 });
 
@@ -144,6 +145,7 @@ export const actualizarConfigLaboral = async (
     const {
       horasContratadasSemana,
       maxDiasVacaciones,
+      tipoDiasVacaciones,
     } = req.body;
 
     const usuario = await User.findById(id);
@@ -159,6 +161,14 @@ export const actualizarConfigLaboral = async (
     usuario.maxDiasVacaciones =
       Number(maxDiasVacaciones);
 
+    // Solo laborables (L-V sin festivos) o naturales; si no llega, no se toca
+    if (
+      tipoDiasVacaciones === "LABORABLES" ||
+      tipoDiasVacaciones === "NATURALES"
+    ) {
+      usuario.tipoDiasVacaciones = tipoDiasVacaciones;
+    }
+
     await usuario.save();
 
     return res.json({
@@ -167,6 +177,8 @@ export const actualizarConfigLaboral = async (
         usuario.horasContratadasSemana,
       maxDiasVacaciones:
         usuario.maxDiasVacaciones,
+      tipoDiasVacaciones:
+        usuario.tipoDiasVacaciones ?? "NATURALES",
     });
   } catch (error) {
     console.error(
@@ -189,7 +201,7 @@ export const obtenerUsuario = async (
 ) => {
   try {
     const user = await User.findById(req.params.id).select(
-      "horasContratadasSemana maxDiasVacaciones"
+      "horasContratadasSemana maxDiasVacaciones tipoDiasVacaciones"
     );
 
     if (!user) {

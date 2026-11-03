@@ -81,6 +81,9 @@ const validarFechas = (
   };
 };
 
+/* AMBAS: entra la póliza si su fecha de efecto o su fecha de venta (createdAt) cae en el periodo. */
+const CRITERIOS_FECHA = ["REGISTRO", "EFECTO", "AMBAS"];
+
 /* Participación extra: 1 por cada 1.000 € de prima neta (importes completos). */
 const EUROS_POR_PARTICIPACION_EXTRA = 1000;
 
@@ -155,7 +158,7 @@ export const crearSorteo = async (
       });
     }
 
-    if (!["REGISTRO", "EFECTO"].includes(criterioFecha)) {
+    if (!CRITERIOS_FECHA.includes(criterioFecha)) {
       return res.status(400).json({
         message: "El criterio de fecha no es válido.",
       });
@@ -362,7 +365,7 @@ export const actualizarSorteo = async (
     }
 
     if (criterioFecha !== undefined) {
-      if (!["REGISTRO", "EFECTO"].includes(criterioFecha)) {
+      if (!CRITERIOS_FECHA.includes(criterioFecha)) {
         return res.status(400).json({
           message: "El criterio de fecha no es válido.",
         });
@@ -466,23 +469,28 @@ export const importarParticipantes = async (
 
     const criterio = req.body.criterioFecha ?? sorteo.criterioFecha;
 
-    if (!["REGISTRO", "EFECTO"].includes(criterio)) {
+    if (!CRITERIOS_FECHA.includes(criterio)) {
       return res.status(400).json({
         message: "El criterio de fecha no es válido.",
       });
     }
 
-    const campoFecha =
-      criterio === "REGISTRO" ? "createdAt" : "fechaEfecto";
+    const rango = {
+      $gte: fechas.inicio,
+      $lte: fechas.fin,
+    };
 
     const filtro: any = {
       estado: "ACTIVA",
       derivadoVerti: { $ne: true },
-      [campoFecha]: {
-        $gte: fechas.inicio,
-        $lte: fechas.fin,
-      },
     };
+
+    if (criterio === "AMBAS") {
+      // Cada venta se devuelve una sola vez aunque cumplan las dos fechas.
+      filtro.$or = [{ fechaEfecto: rango }, { createdAt: rango }];
+    } else {
+      filtro[criterio === "REGISTRO" ? "createdAt" : "fechaEfecto"] = rango;
+    }
 
     const ventas = await Venta.find(filtro).lean();
 
@@ -618,6 +626,70 @@ export const agregarParticipanteManual = async (
     const venta = await Venta.findOne({
       numeroPoliza,
     }).lean();
+
+    /*
+     * Alta manual con participaciones indicadas a mano: no exige que la póliza
+     * exista en ventas, sea MAPFRE ni tenga el ramo configurado.
+     */
+    if (
+      req.body.participaciones !== undefined &&
+      req.body.participaciones !== null &&
+      req.body.participaciones !== ""
+    ) {
+      const participaciones = Number(req.body.participaciones);
+      const saldo =
+        req.body.saldo === undefined || req.body.saldo === null || req.body.saldo === ""
+          ? Number((venta as any)?.primaNeta) || 0
+          : Number(req.body.saldo);
+
+      if (
+        !Number.isInteger(participaciones) ||
+        participaciones < 1 ||
+        participaciones > 1000
+      ) {
+        return res.status(400).json({
+          message: "Las participaciones deben ser un entero entre 1 y 1000.",
+        });
+      }
+
+      if (!Number.isFinite(saldo) || saldo < 0) {
+        return res.status(400).json({
+          message: "El saldo no es válido.",
+        });
+      }
+
+      const v: any = venta || {};
+
+      sorteo.participantes.push({
+        ventaId: v._id,
+        numeroPoliza,
+        tomador: String(v.tomador ?? "").trim() || "Sin tomador",
+        aseguradora: String(v.aseguradora ?? "").trim() || "Sin aseguradora",
+        ramo: String(v.ramo ?? "").trim() || "Sin ramo",
+        fechaEfecto: v.fechaEfecto,
+        fechaRegistro: v.createdAt,
+        primaNeta: saldo,
+        participacionesBase: participaciones,
+        participacionesExtra: 0,
+        participaciones,
+        participacionesPersonalizadas: true,
+        origen: "MANUAL",
+        agregadoEn: new Date(),
+      } as any);
+
+      if (sorteo.estado === "CONFIGURACION") {
+        sorteo.estado = "ABIERTO";
+      }
+
+      await sorteo.save();
+
+      return res.status(201).json({
+        message: "Póliza añadida correctamente.",
+        participante:
+          sorteo.participantes[sorteo.participantes.length - 1],
+        totalParticipantes: sorteo.participantes.length,
+      });
+    }
 
     if (!venta) {
       return res.status(404).json({

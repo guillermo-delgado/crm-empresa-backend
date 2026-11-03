@@ -13,15 +13,12 @@ export interface IUser extends Document {
   // ⏱️ CONFIGURACIÓN LABORAL
   horasContratadasSemana: number;
   maxDiasVacaciones: number;
+  tipoDiasVacaciones?: "LABORABLES" | "NATURALES";
   balanceMinutos?: number;
 
   // 🔐 Sesiones
-  crmSessionId?: string | null;   // Desktop
- refreshToken: {
-  type: String,
-  default: null,
-},
-
+  crmSessionId?: string | null; // Desktop
+  refreshToken?: string | null;
 
   createdAt: Date;
   updatedAt: Date;
@@ -95,6 +92,13 @@ const UserSchema = new Schema<IUser>(
       type: Number,
       default: 30,
       min: 0,
+    },
+
+    // Cómo cuentan los días de vacaciones: solo L-V sin festivos, o todos
+    tipoDiasVacaciones: {
+      type: String,
+      enum: ["LABORABLES", "NATURALES"],
+      default: "NATURALES",
     },
 
     balanceMinutos: {

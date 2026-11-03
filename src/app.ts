@@ -23,6 +23,9 @@ import facturasRoutes from "./modules/facturas/facturas.routes";
 // 📊 DASHBOARD CRM
 import dashboardRoutes from "./modules/dashboard/dashboard.routes";
 
+// 📌 AGENDA (notas, llamadas y avisos)
+import agendaRoutes from "./modules/agenda/agenda.routes";
+
 const app = express();
 
 /* =========================
@@ -65,6 +68,7 @@ app.use("/api/crm/sorteos", sorteosRoutes);
 app.use("/api/horario", horarioRoutes);
 
 // 🧑‍💼 CRM / Admin
+app.use("/api/agenda", agendaRoutes); // 📌 Agenda
 app.use("/api/crm/horario", horarioCrmRoutes);
 app.use("/api/crm/fichajes", fichajesCrmRoutes);
 
